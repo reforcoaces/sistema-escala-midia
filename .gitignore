@@ -1,0 +1,47 @@
+# --- Sistemas Operacionais ---
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# --- IDEs e Editores (VS Code, JetBrains, Sublime, etc) ---
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# --- Pastas de Dependências ---
+node_modules/
+jspm_packages/
+vendor/
+.venv/
+env/
+venv/
+
+# --- Arquivos de Logs e Bancos de Dados ---
+*.log
+*.sqlite
+*.db
+
+# --- Arquivos de Build/Compilação ---
+dist/
+build/
+bin/
+obj/
+*.exe
+*.dll
+*.so
+*.dylib
+*.class
+*.jar
+
+# --- Variáveis de Ambiente (MUITO IMPORTANTE) ---
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.vs/
