@@ -21,10 +21,18 @@ vendor/
 env/
 venv/
 
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+
 # --- Arquivos de Logs e Bancos de Dados ---
 *.log
 *.sqlite
 *.db
+
+# Fonte baixada automaticamente na primeira exportação PDF
+fonts/DejaVuSans.ttf
 
 # --- Arquivos de Build/Compilação ---
 dist/

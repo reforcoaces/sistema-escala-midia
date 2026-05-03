@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Escala de comunicação</title>
+    <link rel="stylesheet" href="/static/style.css" />
+    <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+  </head>
+  <body>
+    <header>
+      <h1>Escala de comunicação</h1>
+      <p>
+        Cadastre o time (com data de nascimento para regras de idade), marque disponibilidade (ou
+        importe CSV), inclua eventos extras, gere a escala e exporte em PDF, PNG ou JPG.
+      </p>
+    </header>
+    <main>
+      <nav class="tabs">
+        <button type="button" class="active" data-tab="vol">Voluntários</button>
+        <button type="button" data-tab="month">Mês e escala</button>
+        <button type="button" data-tab="birthdays">Aniversariantes</button>
+      </nav>
+
+      <section id="tab-vol" class="tab-panel">
+        <div class="panel">
+          <h2>Novo voluntário</h2>
+          <div class="row">
+            <label>
+              Nome
+              <input type="text" id="new-vol-name" placeholder="Nome completo" />
+            </label>
+            <label>
+              Data de nascimento
+              <input type="date" id="new-vol-birth" />
+            </label>
+            <div>
+              <span style="font-size: 0.8rem; color: var(--muted)">Áreas aptas</span>
+              <div id="new-vol-areas" class="area-tags" style="margin-top: 0.35rem"></div>
+            </div>
+            <button type="button" id="btn-add-vol">Cadastrar</button>
+          </div>
+          <div id="vol-msg" class="message hidden"></div>
+          <p style="font-size: 0.8rem; color: var(--muted); margin: 0.5rem 0 0">
+            Quem tem <strong>15 anos ou menos</strong> não entra na escala de <strong>domingos</strong>,
+            exceto no <strong>1º domingo do mês</strong> (Santa Ceia).
+          </p>
+        </div>
+        <div class="panel">
+          <h2>Cadastrados</h2>
+          <div id="vol-summary" class="vol-summary" aria-live="polite"></div>
+          <div class="row vol-backup-toolbar" style="flex-wrap: wrap; gap: 0.5rem 1rem; align-items: center; margin-bottom: 0.75rem">
+            <button type="button" class="secondary" id="btn-export-vols">Exportar JSON</button>
+            <button type="button" class="secondary" id="btn-import-vols">Importar JSON…</button>
+            <input type="file" id="import-vols-file" accept="application/json,.json" class="hidden" />
+            <label class="vol-import-mode">
+              <span class="vol-import-mode-label">Ao importar</span>
+              <select id="import-vols-mode">
+                <option value="merge">Mesclar (mesmo nome = atualiza)</option>
+                <option value="replace">Substituir tudo (apaga o cadastro atual)</option>
+              </select>
+            </label>
+          </div>
+          <p class="vol-backup-hint">
+            Guarde um export periodicamente. <strong>Substituir tudo</strong> remove todos os
+            voluntários e recria só os do arquivo (também apaga disponibilidade deles; escalas antigas
+            podem ficar com vagas vazias).
+          </p>
+          <div id="vol-backup-msg" class="message hidden"></div>
+          <ul id="volunteer-list" class="volunteer-list"></ul>
+        </div>
+      </section>
+
+      <section id="tab-month" class="tab-panel hidden">
+        <div class="panel">
+          <h2>Mês</h2>
+          <div class="row">
+            <label>
+              Período
+              <input type="month" id="month-picker" />
+            </label>
+            <button type="button" class="secondary" id="btn-refresh-month">Recarregar</button>
+          </div>
+          <p style="font-size: 0.85rem; color: var(--muted); margin: 0 0 0.5rem">
+            Cultos regulares: <strong>quintas-feiras (20h às 21h30)</strong> e
+            <strong>domingos (18h às 20h)</strong>. Adicione abaixo outros dias (com horário
+            opcional) e edite descrição/horário nos eventos já cadastrados.
+          </p>
+          <div class="row">
+            <label>
+              Data extra (AAAA-MM-DD)
+              <input type="date" id="extra-date" />
+            </label>
+            <label>
+              Descrição (ex.: Sábado — evangelismo)
+              <input type="text" id="extra-label" style="min-width: 200px" />
+            </label>
+            <label>
+              Horário (opcional)
+              <input type="text" id="extra-time" placeholder="ex.: 19h às 21h" style="min-width: 140px" />
+            </label>
+            <button type="button" id="btn-add-extra">Incluir na escala</button>
+          </div>
+          <ul id="extras-list" class="extras-list"></ul>
+          <div id="month-msg" class="message hidden"></div>
+        </div>
+
+        <div class="panel">
+          <h2>Disponibilidade</h2>
+          <div class="row">
+            <label>
+              Voluntário
+              <select id="avail-volunteer">
+                <option value="">— selecione —</option>
+              </select>
+            </label>
+            <button type="button" class="secondary" id="btn-fill-sundays">
+              Marcar disponível — todos os domingos
+            </button>
+            <button type="button" class="secondary" id="btn-fill-thursdays">
+              Marcar disponível — todas as quintas
+            </button>
+            <button type="button" class="secondary" id="btn-clear-sundays">
+              Desmarcar — todos os domingos
+            </button>
+            <button type="button" class="secondary" id="btn-clear-thursdays">
+              Desmarcar — todas as quintas
+            </button>
+          </div>
+          <div id="avail-editor"></div>
+          <hr style="border: none; border-top: 1px solid var(--border); margin: 1rem 0" />
+          <h2 style="margin-top: 0">Importar respostas (CSV)</h2>
+          <p style="font-size: 0.85rem; color: var(--muted)">
+            Exporte o Google Forms como CSV. O sistema tenta achar colunas com
+            <em>nome</em> e <em>data</em> (e opcionalmente disponibilidade). Os nomes precisam
+            bater com o cadastro.
+          </p>
+          <input type="file" id="csv-file" accept=".csv,text/csv" />
+          <div id="import-msg" class="message hidden"></div>
+        </div>
+
+        <div class="panel">
+          <h2>Gerar e exportar</h2>
+          <p style="font-size: 0.85rem; color: var(--muted)">
+            A montagem automática respeita aptidão, disponibilidade explícita (checkbox),
+            uma função por pessoa por culto e tenta distribuir cargos de forma equilibrada.
+          </p>
+          <label class="chk-training">
+            <input type="checkbox" id="chk-include-training" />
+            <span
+              >Mostrar na escala: <strong>Oficina de comunicação · Todos os Domingos · 7h30 às
+              9h30</strong></span>
+          </label>
+          <div class="row">
+            <button type="button" id="btn-gen">Gerar escala automática</button>
+            <button type="button" class="secondary" id="btn-pdf">Baixar PDF</button>
+            <button type="button" class="secondary" id="btn-png">Baixar PNG</button>
+            <button type="button" class="secondary" id="btn-jpg">Baixar JPG</button>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h2>Pré-visualização (WhatsApp / impressão)</h2>
+          <div id="schedule-preview"></div>
+        </div>
+
+        <div class="panel">
+          <h2>Cargos por culto (edição manual)</h2>
+          <div id="manual-editor"></div>
+        </div>
+
+        <div class="panel">
+          <h2>Quem foi escalado quantas vezes neste mês</h2>
+          <p class="stats-intro muted">
+            Visão em barras (proporcional ao maior número do mês) e lista numérica.
+          </p>
+          <div id="stats-chart" class="stats-chart" aria-label="Gráfico de escalas por voluntário"></div>
+          <p class="stats-subtitle">Lista numérica</p>
+          <div id="stats-body" class="stats-list stats-by-number"></div>
+          <div id="stats-never-wrap" class="stats-never-wrap hidden">
+            <p class="stats-subtitle">Não escalados neste mês (0 cargos)</p>
+            <div id="stats-never" class="stats-never-list" aria-label="Voluntários sem escala no mês"></div>
+          </div>
+          <p id="stats-all-assigned" class="stats-all-assigned muted hidden"></p>
+        </div>
+      </section>
+
+      <section id="tab-birthdays" class="tab-panel hidden">
+        <div class="panel">
+          <h2>Aniversariantes</h2>
+          <p style="font-size: 0.85rem; color: var(--muted); margin: 0 0 0.75rem">
+            Próximos aniversários com base na data de nascimento cadastrada em Voluntários. Para
+            parabenizar a equipe no Discord no dia, configure o webhook do canal abaixo.
+          </p>
+          <div class="row" style="align-items: flex-end; flex-wrap: wrap; gap: 0.75rem">
+            <label style="flex: 1; min-width: 240px">
+              Webhook do Discord (URL)
+              <input
+                type="url"
+                id="discord-webhook"
+                placeholder="https://discord.com/api/webhooks/…"
+                autocomplete="off"
+              />
+            </label>
+            <button type="button" id="btn-save-webhook" class="secondary">Salvar webhook</button>
+          </div>
+          <div id="birthdays-settings-msg" class="message hidden" style="margin-top: 0.5rem"></div>
+          <div class="row" style="margin-top: 1rem; align-items: center; flex-wrap: wrap; gap: 0.75rem">
+            <label>
+              Janela
+              <select id="birthdays-window">
+                <option value="30">30 dias</option>
+                <option value="90">90 dias</option>
+                <option value="180">180 dias</option>
+                <option value="365" selected>1 ano</option>
+              </select>
+            </label>
+            <button type="button" id="btn-birthdays-refresh">Atualizar lista</button>
+            <button type="button" id="btn-birthdays-notify">Enviar parabéns no Discord (hoje)</button>
+            <button type="button" class="secondary" id="btn-birthdays-notify-force">
+              Reenviar (ignora “já enviado”)
+            </button>
+          </div>
+          <p style="font-size: 0.8rem; color: var(--muted); margin: 0.5rem 0 0">
+            O envio automático pode ser feito com uma tarefa agendada (cron / Agendador do Windows)
+            que chame <code>POST /api/birthdays/notify-today</code> com corpo JSON vazio, uma vez por
+            dia.
+          </p>
+          <div id="birthdays-notify-msg" class="message hidden" style="margin-top: 0.5rem"></div>
+          <div id="birthdays-table-wrap" style="margin-top: 1rem; overflow-x: auto"></div>
+        </div>
+      </section>
+    </main>
+
+    <div id="edit-modal" class="hidden">
+      <div class="panel" style="max-width: 480px; width: 90%; margin: 0">
+        <h2>Editar voluntário</h2>
+        <input type="hidden" id="edit-vol-id" />
+        <label>
+          Nome
+          <input type="text" id="edit-vol-name" />
+        </label>
+        <label style="margin-top: 0.5rem">
+          Data de nascimento
+          <input type="date" id="edit-vol-birth" />
+        </label>
+        <div style="margin-top: 0.75rem">
+          <span style="font-size: 0.8rem; color: var(--muted)">Áreas</span>
+          <div id="edit-vol-areas" class="area-tags" style="margin-top: 0.35rem"></div>
+        </div>
+        <div class="row" style="margin-top: 1rem">
+          <button type="button" id="btn-save-edit">Salvar</button>
+          <button type="button" class="secondary" id="btn-close-edit">Cancelar</button>
+        </div>
+        <div id="edit-msg" class="message hidden"></div>
+      </div>
+    </div>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>
