@@ -14,6 +14,7 @@ from flask import Flask, Response, jsonify, render_template, request
 import birthdays as birthdays_mod
 import db
 from db import connection
+from full_backup import build_full_backup_payload, restore_full_backup
 from logic import (
     AREAS,
     assign_greedy_fair,
@@ -333,6 +334,37 @@ def import_volunteers_json():
         "total": len(entries),
     }
     return jsonify(out)
+
+
+@app.route("/api/backup/full.json", methods=["GET"])
+def export_full_backup():
+    """Backup global: voluntários (com ids), áreas, extras, disponibilidade, escalas, opções, definições."""
+    with connection() as conn:
+        payload = build_full_backup_payload(conn)
+    raw = json.dumps(payload, ensure_ascii=False, indent=2)
+    fname = f"escala_backup_completo_{dt.date.today().isoformat()}.json"
+    return Response(
+        raw.encode("utf-8"),
+        mimetype="application/json; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="{fname}"',
+            "Content-Type": "application/json; charset=utf-8",
+        },
+    )
+
+
+@app.route("/api/backup/restore", methods=["POST"])
+def restore_full_backup_route():
+    """Substitui toda a base pelo conteúdo do backup (irreversível sem novo arquivo)."""
+    data = request.get_json(force=True, silent=True) or {}
+    try:
+        with connection() as conn:
+            stats = restore_full_backup(conn, data)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except sqlite3.IntegrityError as e:
+        return jsonify({"error": f"Conflito ao restaurar: {e}."}), 409
+    return jsonify({"ok": True, **stats})
 
 
 def _extras_for_month(

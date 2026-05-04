@@ -6,15 +6,17 @@ import datetime as dt
 from collections import defaultdict
 from typing import Any, Iterable
 
+# Ordem = prioridade na geração automática quando faltam pessoas no mesmo culto
+# (cada voluntário no máximo uma função por data): 1 Responsável … 8 Filmagem.
 AREAS = [
+    "RESPONSAVEL",
+    "SONOPLASTIA",
+    "ILUMINAÇÃO",
     "PROJEÇÃO",
-    "OBS",
-    "FILMAGEM",
     "INSTAGRAM",
     "FOTOGRAFIA",
-    "ILUMINAÇÃO",
-    "SONOPLASTIA",
-    "RESPONSAVEL",
+    "OBS",
+    "FILMAGEM",
 ]
 
 WEEKDAY_PT = (
@@ -149,6 +151,39 @@ def build_month_events(
     return out
 
 
+def _candidates_for_slot(
+    event_date: str,
+    area: str,
+    volunteer_areas: dict[int, set[str]],
+    availability: dict[int, dict[str, bool]],
+    births: dict[int, str | None],
+    already: set[int],
+) -> list[int]:
+    """Voluntários aptos, disponíveis nesta data, ainda não usados neste culto, sem bloqueio de idade."""
+    candidates: list[int] = []
+    for vid, apt in volunteer_areas.items():
+        if area not in apt:
+            continue
+        av = availability.get(vid, {}).get(event_date)
+        if av is False:
+            continue
+        if av is None:
+            continue
+        if vid in already:
+            continue
+        if teen_sunday_escala_forbidden(births.get(vid), event_date):
+            continue
+        candidates.append(vid)
+    return candidates
+
+
+def _pick_fairest(candidates: list[int], counts: dict[int, int]) -> int | None:
+    if not candidates:
+        return None
+    candidates.sort(key=lambda v: (counts[v], v))
+    return candidates[0]
+
+
 def assign_greedy_fair(
     event_dates: list[str],
     areas: list[str],
@@ -159,6 +194,12 @@ def assign_greedy_fair(
     """
     Para cada (data, área), escolhe um voluntário apto, disponível,
     ainda não escalado nesse culto, priorizando quem tem menos escalas no mês.
+    A ordem dos itens em `areas` define a prioridade de cobertura por culto
+    (áreas no início da lista competem primeiro pelos voluntários do dia).
+
+    Se RESPONSAVEL ficar vazio mas existir alguém apto a RESPONSAVEL já escalado
+    noutra função (área de menor prioridade), promove essa pessoa a RESPONSAVEL
+    e tenta repreencher a vaga libertada (prioridade ao desfazer da área menos importante).
 
     volunteer_birth: id -> data de nascimento ISO (opcional). Menores de 16 não entram
     em domingos exceto o 1º domingo do mês (Santa Ceia).
@@ -171,26 +212,69 @@ def assign_greedy_fair(
     for event_date in event_dates:
         already = assigned_same_day[event_date]
         for area in areas:
-            candidates: list[int] = []
-            for vid, apt in volunteer_areas.items():
-                if area not in apt:
-                    continue
-                av = availability.get(vid, {}).get(event_date)
-                if av is False:
-                    continue
-                if av is None:
-                    continue
-                if vid in already:
-                    continue
-                if teen_sunday_escala_forbidden(births.get(vid), event_date):
-                    continue
-                candidates.append(vid)
-
-            candidates.sort(key=lambda v: (counts[v], v))
-            chosen = candidates[0] if candidates else None
+            candidates = _candidates_for_slot(
+                event_date,
+                area,
+                volunteer_areas,
+                availability,
+                births,
+                already,
+            )
+            chosen = _pick_fairest(candidates, counts)
             result[(event_date, area)] = chosen
             if chosen is not None:
                 counts[chosen] += 1
                 already.add(chosen)
+
+    # Garantir RESPONSAVEL (prioridade 1) se ainda houver apto escalado só mais abaixo
+    if not areas:
+        return result
+    resp_area = areas[0]
+    if resp_area != "RESPONSAVEL":
+        return result
+
+    lower = areas[1:]
+    for event_date in event_dates:
+        if result.get((event_date, resp_area)) is not None:
+            continue
+
+        promoted_vid: int | None = None
+        promoted_from: str | None = None
+        for area in reversed(lower):
+            vid = result.get((event_date, area))
+            if vid is None:
+                continue
+            if resp_area not in volunteer_areas.get(vid, set()):
+                continue
+            promoted_vid = vid
+            promoted_from = area
+            break
+
+        if promoted_vid is None or promoted_from is None:
+            continue
+
+        result[(event_date, resp_area)] = promoted_vid
+        result[(event_date, promoted_from)] = None
+
+        already_on_day = {
+            v
+            for a in areas
+            for v in [result.get((event_date, a))]
+            if v is not None
+        }
+        refill = _pick_fairest(
+            _candidates_for_slot(
+                event_date,
+                promoted_from,
+                volunteer_areas,
+                availability,
+                births,
+                already_on_day,
+            ),
+            counts,
+        )
+        result[(event_date, promoted_from)] = refill
+        if refill is not None:
+            counts[refill] += 1
 
     return result

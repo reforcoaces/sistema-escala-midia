@@ -43,6 +43,8 @@ def _short(text: str, max_len: int) -> str:
 
 TRAINING_PDF_BANNER = "Oficina de comunicação · Todos os Domingos · 7h30 às 9h30."
 
+EMPTY_CELL_PLACEHOLDER = "Responsável do dia"
+
 
 def build_schedule_pdf(
     title: str,
@@ -53,7 +55,7 @@ def build_schedule_pdf(
 ) -> bytes:
     """
     events: lista de {date, label, time_range?}
-    names_by_cell: (data_iso, area) -> nome ou '-'
+    names_by_cell: (data_iso, area) -> nome; '-' ou '—' vira texto cinza «Responsável do dia»
     """
     font_path = _dejavu_path()
     if not font_path.is_file():
@@ -105,8 +107,19 @@ def build_schedule_pdf(
         pdf.cell(col_date, row_h, date_txt, border=1, align="L")
         pdf.cell(col_lbl, row_h, ev_lbl, border=1, align="L")
         for area in AREAS:
-            name = names_by_cell.get((date_iso, area), "-") or "-"
-            pdf.cell(area_w, row_h, _short(name, 18), border=1, align="C")
+            name = (names_by_cell.get((date_iso, area), "-") or "-").strip()
+            if name in ("-", "—"):
+                pdf.set_text_color(190, 190, 190)
+                pdf.cell(
+                    area_w,
+                    row_h,
+                    _short(EMPTY_CELL_PLACEHOLDER, 20),
+                    border=1,
+                    align="C",
+                )
+                pdf.set_text_color(0, 0, 0)
+            else:
+                pdf.cell(area_w, row_h, _short(name, 18), border=1, align="C")
         pdf.ln()
 
     return bytes(pdf.output())

@@ -15,6 +15,9 @@ let includeTraining = false;
 const TRAINING_NOTE_HTML =
   "Oficina de comunicação · Todos os Domingos · 7h30 às 9h30.";
 
+/** Texto suave nas células sem voluntário (falta de pessoas no culto). */
+const EMPTY_SCHEDULE_PLACEHOLDER = "Responsável do dia";
+
 async function api(path, opts = {}) {
   const r = await fetch(path, {
     headers: { "Content-Type": "application/json", ...opts.headers },
@@ -175,6 +178,77 @@ async function onImportVolsFileChange(ev) {
         ? `Cadastro substituído: ${out.created} voluntário(s).`
         : `Importação: ${out.created} novo(s), ${out.updated} atualizado(s).`;
     if (msg) showMsg(msg, t, true);
+  } catch (e) {
+    if (msg) showMsg(msg, e.message, false);
+  }
+}
+
+async function exportFullBackupJson() {
+  const msg = $("#full-backup-msg");
+  if (msg) msg.classList.add("hidden");
+  try {
+    const r = await fetch("/api/backup/full.json");
+    const text = await r.text();
+    if (!r.ok) {
+      let err = text;
+      try {
+        const j = JSON.parse(text);
+        if (j.error) err = j.error;
+      } catch {
+        /* ignore */
+      }
+      throw new Error(err || r.statusText);
+    }
+    const blob = new Blob([text], { type: "application/json;charset=utf-8" });
+    const cd = r.headers.get("Content-Disposition");
+    let fname = "escala_backup_completo.json";
+    const m = cd && cd.match(/filename="([^"]+)"/i);
+    if (m) fname = m[1];
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = fname;
+    a.click();
+    URL.revokeObjectURL(a.href);
+    if (msg) showMsg(msg, "Backup completo baixado.", true);
+  } catch (e) {
+    if (msg) showMsg(msg, e.message, false);
+  }
+}
+
+async function onImportFullBackupFileChange(ev) {
+  const msg = $("#full-backup-msg");
+  const input = ev.target;
+  const file = input.files && input.files[0];
+  if (!file) return;
+  input.value = "";
+  if (msg) msg.classList.add("hidden");
+  try {
+    const text = await file.text();
+    const parsed = JSON.parse(text);
+    if (parsed.format !== "sistema-escala-midia-full") {
+      throw new Error(
+        "Este ficheiro não é um backup completo (use «Baixar backup completo» desta ou de outra instância)."
+      );
+    }
+    const ok = window.confirm(
+      "Isto apaga TODO o estado atual nesta base (voluntários, escalas, disponibilidades, eventos extra, definições, etc.) e substitui pelo conteúdo deste ficheiro. Continuar?"
+    );
+    if (!ok) return;
+    const out = await api("/api/backup/restore", {
+      method: "POST",
+      body: JSON.stringify(parsed),
+    });
+    await loadVolunteers();
+    populateAvailVolunteer();
+    await loadMonthData();
+    await loadBirthdaysTab();
+    const parts = [
+      `${out.volunteers} voluntário(s)`,
+      `${out.assignment} células de escala`,
+      `${out.availability} disponibilidades`,
+      `${out.extra_event} evento(s) extra`,
+    ];
+    if (msg) showMsg(msg, `Base restaurada: ${parts.join(", ")}.`, true);
   } catch (e) {
     if (msg) showMsg(msg, e.message, false);
   }
@@ -755,15 +829,20 @@ function renderScheduleTable() {
     html += `<td class="col-event">${escapeHtml(ev.label)}${trainExtra}</td>`;
     for (const a of areas) {
       const cell = (assignments[ev.date] && assignments[ev.date][a]) || {};
-      const name = cell.name || "—";
       const vid = cell.volunteer_id;
+      const empty = vid == null || vid === "";
+      const inner = empty
+        ? `<span class="schedule-cell-placeholder">${escapeHtml(
+            EMPTY_SCHEDULE_PLACEHOLDER
+          )}</span>`
+        : escapeHtml(cell.name || "—");
       const issues = assignmentCellIssues(ev.date, a, vid);
       const inv = issues.length > 0;
       if (inv) invalidCount += 1;
       const baseCls = a === "RESPONSAVEL" ? "area-resp" : "";
       const cls = [baseCls, inv ? "cell-invalid" : ""].filter(Boolean).join(" ");
       const tip = inv ? escapeHtml(issues.join(" · ")) : "";
-      html += `<td class="${cls}" ${tip ? `title="${tip}"` : ""}>${escapeHtml(name)}</td>`;
+      html += `<td class="${cls}" ${tip ? `title="${tip}"` : ""}>${inner}</td>`;
     }
     html += "</tr>";
   }
@@ -976,7 +1055,24 @@ async function notifyBirthdaysDiscord(force) {
   }
 }
 
+function initThemeToggle() {
+  const btn = document.getElementById("theme-toggle");
+  if (!btn) return;
+  btn.addEventListener("click", () => {
+    const html = document.documentElement;
+    const cur = html.getAttribute("data-theme") === "light" ? "light" : "dark";
+    const next = cur === "light" ? "dark" : "light";
+    html.setAttribute("data-theme", next);
+    try {
+      localStorage.setItem("theme", next);
+    } catch {
+      /* ignore */
+    }
+  });
+}
+
 document.addEventListener("DOMContentLoaded", async () => {
+  initThemeToggle();
   initMonthPicker();
   await loadAreas();
   renderAreaCheckboxes("#new-vol-areas");
@@ -987,6 +1083,11 @@ document.addEventListener("DOMContentLoaded", async () => {
   $("#btn-export-vols")?.addEventListener("click", exportVolunteersJson);
   $("#btn-import-vols")?.addEventListener("click", () => $("#import-vols-file")?.click());
   $("#import-vols-file")?.addEventListener("change", onImportVolsFileChange);
+  $("#btn-full-backup-download")?.addEventListener("click", exportFullBackupJson);
+  $("#btn-full-backup-restore")?.addEventListener("click", () =>
+    $("#import-full-backup-file")?.click()
+  );
+  $("#import-full-backup-file")?.addEventListener("change", onImportFullBackupFileChange);
   $("#btn-save-edit")?.addEventListener("click", saveEditVolunteer);
   $("#btn-close-edit")?.addEventListener("click", closeEdit);
   $("#month-picker")?.addEventListener("change", loadMonthData);

@@ -30,6 +30,7 @@ __pycache__/
 *.log
 *.sqlite
 *.db
+*.rar
 
 # Fonte baixada automaticamente na primeira exportação PDF
 fonts/DejaVuSans.ttf
