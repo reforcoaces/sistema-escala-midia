@@ -848,12 +848,13 @@ def api_settings():
     """Configurações globais (ex.: webhook do Discord para aniversários)."""
     if request.method == "GET":
         with connection() as conn:
-            row = conn.execute(
-                "SELECT value FROM app_setting WHERE key = ?",
-                (birthdays_mod.KEY_DISCORD_WEBHOOK,),
-            ).fetchone()
-        url = (row["value"] or "").strip() if row else ""
-        return jsonify({"discord_webhook_url": url})
+            url, source = birthdays_mod.resolve_discord_webhook_url(conn)
+        return jsonify(
+            {
+                "discord_webhook_url": url if source != "env" else "",
+                "discord_webhook_source": source,
+            }
+        )
 
     data = request.get_json(force=True, silent=True) or {}
     url = (data.get("discord_webhook_url") or "").strip()

@@ -968,7 +968,12 @@ async function loadBirthdaysTab() {
   try {
     const s = await api("/api/settings");
     const inp = $("#discord-webhook");
-    if (inp) inp.value = s.discord_webhook_url || "";
+    const hint = $("#discord-webhook-env-hint");
+    if (inp) {
+      inp.value = s.discord_webhook_url || "";
+      inp.disabled = s.discord_webhook_source === "env";
+    }
+    if (hint) hint.classList.toggle("hidden", s.discord_webhook_source !== "env");
   } catch (e) {
     if (setMsg) showMsg(setMsg, e.message, false);
   }
@@ -1023,6 +1028,14 @@ async function saveDiscordWebhook() {
   const inp = $("#discord-webhook");
   const msg = $("#birthdays-settings-msg");
   if (!inp || !msg) return;
+  if (inp.disabled) {
+    showMsg(
+      msg,
+      "O webhook está definido pela variável DISCORD_WEBHOOK_URL no servidor. Remova-a no painel (ex.: Render) para editar aqui.",
+      false
+    );
+    return;
+  }
   try {
     await api("/api/settings", {
       method: "PATCH",

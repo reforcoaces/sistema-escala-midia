@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import os
 import sqlite3
 import urllib.error
 import urllib.request
@@ -11,6 +12,25 @@ from typing import Any
 from logic import WEEKDAY_PT, age_on_date
 
 KEY_DISCORD_WEBHOOK = "discord_webhook_url"
+# Opcional no Render: Environment → DISCORD_WEBHOOK_URL (Secret). Tem prioridade sobre a base.
+ENV_DISCORD_WEBHOOK = "DISCORD_WEBHOOK_URL"
+
+
+def resolve_discord_webhook_url(conn: sqlite3.Connection) -> tuple[str, str]:
+    """
+    Retorna (url, origem): origem «env», «database» ou «none».
+    Variável de ambiente DISCORD_WEBHOOK_URL, se não vazia, substitui o valor guardado em app_setting.
+    """
+    env_url = (os.environ.get(ENV_DISCORD_WEBHOOK) or "").strip()
+    if env_url:
+        return env_url, "env"
+    row = conn.execute(
+        "SELECT value FROM app_setting WHERE key = ?", (KEY_DISCORD_WEBHOOK,)
+    ).fetchone()
+    db_url = (row["value"] or "").strip() if row else ""
+    if db_url:
+        return db_url, "database"
+    return "", "none"
 
 
 def _birthday_on_year(birth: dt.date, year: int) -> dt.date:
@@ -98,13 +118,11 @@ def notify_birthdays_today(
     today = today or dt.date.today()
     y = today.year
 
-    row = conn.execute(
-        "SELECT value FROM app_setting WHERE key = ?", (KEY_DISCORD_WEBHOOK,)
-    ).fetchone()
-    url = (row["value"] or "").strip() if row else ""
+    url, _ = resolve_discord_webhook_url(conn)
     if not url:
         raise ValueError(
-            "Configure o URL do webhook do Discord na aba Aniversariantes antes de enviar."
+            "Configure o webhook: variável DISCORD_WEBHOOK_URL no servidor ou URL na aba "
+            "Aniversariantes antes de enviar."
         )
 
     rows = conn.execute(
