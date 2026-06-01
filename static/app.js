@@ -420,12 +420,16 @@ async function loadStats() {
       allAssignedEl.classList.add("hidden");
       allAssignedEl.textContent = "";
     }
+    renderWorshipAlertsInStats([]);
   };
 
   try {
     const raw = await api(`/api/stats/${ym.year}/${ym.month}`);
     const rows = Array.isArray(raw) ? raw : raw.assigned || [];
     const never = Array.isArray(raw) ? [] : raw.never_assigned || [];
+    const worshipAlerts = Array.isArray(raw)
+      ? computeWorshipAlerts()
+      : raw.worship_alerts || [];
     const max = rows.reduce((m, r) => Math.max(m, r.count || 0), 0);
 
     resetNeverUi();
@@ -486,6 +490,10 @@ async function loadStats() {
         "Todos os voluntários cadastrados entram na escala pelo menos uma vez neste mês.";
       allAssignedEl.classList.remove("hidden");
     }
+
+    renderWorshipAlertsInStats(
+      worshipAlerts.length ? worshipAlerts : computeWorshipAlerts()
+    );
   } catch {
     chartEl.innerHTML = "";
     numEl.innerHTML = "";
@@ -675,6 +683,99 @@ function weekdayLongPt(iso) {
   return names[dt.getDay()];
 }
 
+/**
+ * Alertas: sem dia só para cultuar (espelha logic.detect_no_worship_day_alerts).
+ * Não bloqueia escalação — apenas informa para revisão futura.
+ */
+function computeWorshipAlerts() {
+  const eventDates = events.map((e) => e.date);
+  if (!eventDates.length) return [];
+
+  const eventSet = new Set(eventDates);
+  const assignedBy = {};
+
+  for (const ed of eventDates) {
+    for (const a of areas) {
+      const cell = assignments[ed] && assignments[ed][a];
+      const vid = cell && cell.volunteer_id;
+      if (vid != null && vid !== "") {
+        const id = +vid;
+        if (!assignedBy[id]) assignedBy[id] = new Set();
+        assignedBy[id].add(ed);
+      }
+    }
+  }
+
+  const alerts = [];
+  for (const [vidStr, assignedDates] of Object.entries(assignedBy)) {
+    const vid = +vidStr;
+    const v = volunteers.find((x) => x.id === vid);
+    const name = (v && v.name) || `#${vid}`;
+
+    if (assignedDates.size >= eventSet.size) {
+      const n = eventDates.length;
+      alerts.push({
+        volunteer_id: vid,
+        name,
+        kind: "all_events",
+        detail: `Escalada em todos os ${n} cultos do mês — nenhum dia só para cultuar nesta escala.`,
+      });
+      continue;
+    }
+
+    const availDates = eventDates.filter(
+      (d) => (availability[vid] || {})[d] === true
+    );
+    if (
+      availDates.length &&
+      availDates.every((d) => assignedDates.has(d))
+    ) {
+      const n = availDates.length;
+      alerts.push({
+        volunteer_id: vid,
+        name,
+        kind: "all_available",
+        detail: `Escalada em todos os ${n} dia(s) em que marcou disponibilidade — vale garantir outro dia para cultuar.`,
+      });
+    }
+  }
+
+  alerts.sort((a, b) => (a.name || "").localeCompare(b.name || "", "pt"));
+  return alerts;
+}
+
+function worshipAlertsBannerHtml(alerts) {
+  if (!alerts.length) return "";
+  const items = alerts
+    .map(
+      (a) =>
+        `<li><strong>${escapeHtml(a.name)}</strong> — ${escapeHtml(a.detail)}</li>`
+    )
+    .join("");
+  return `<div class="schedule-worship-banner" role="status">
+    <p><strong>Alerta (tempo para cultuar):</strong> estas pessoas ficaram sem nenhum culto só para cultuar nesta escala. Isso não impede a escalação — use como lembrete para ajustar nos próximos meses quando houver mais gente.</p>
+    <ul class="schedule-worship-list">${items}</ul>
+  </div>`;
+}
+
+function renderWorshipAlertsInStats(alerts) {
+  const wrap = $("#stats-worship-wrap");
+  const list = $("#stats-worship-list");
+  if (!wrap || !list) return;
+  if (!alerts.length) {
+    wrap.classList.add("hidden");
+    list.innerHTML = "";
+    return;
+  }
+  wrap.classList.remove("hidden");
+  list.innerHTML = alerts
+    .map(
+      (a) =>
+        `<li><strong>${escapeHtml(a.name)}</strong> — ${escapeHtml(a.detail)}</li>`
+    )
+    .join("");
+}
+
 /** Voluntários escalados mais de uma vez no mesmo culto (mesma data). */
 function volunteerIdsDuplicatedOnDate(eventDate) {
   const counts = {};
@@ -849,6 +950,10 @@ function renderScheduleTable() {
   html += "</tbody></table>";
   if (invalidCount > 0) {
     html += `<p class="schedule-invalid-banner" role="alert"><strong>${invalidCount} célula(s) com problema.</strong> Passe o mouse na célula vermelha para ver o motivo (disponibilidade, aptidão ou duas funções no mesmo culto).</p>`;
+  }
+  const worshipAlerts = computeWorshipAlerts();
+  if (worshipAlerts.length) {
+    html += worshipAlertsBannerHtml(worshipAlerts);
   }
   host.innerHTML = html;
   renderManualEditor();

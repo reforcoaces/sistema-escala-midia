@@ -20,6 +20,7 @@ from logic import (
     assign_greedy_fair,
     build_month_events,
     dates_in_month_with_weekdays,
+    detect_no_worship_day_alerts,
     teen_sunday_escala_forbidden,
     thursday_sunday_dates,
 )
@@ -911,8 +912,8 @@ def api_birthdays_notify_today():
 @app.route("/api/stats/<int:year>/<int:month>", methods=["GET"])
 def stats(year: int, month: int):
     """
-    Contagem de escalas por voluntário no mês (com detalhe por área) e lista de quem
-    não entrou na escala nenhuma vez nesse mês.
+    Contagem de escalas por voluntário no mês (com detalhe por área), lista de quem
+    não entrou na escala nenhuma vez nesse mês e alertas de quem não tem dia para cultuar.
     """
     with connection() as conn:
         rows = conn.execute(
@@ -940,6 +941,45 @@ def stats(year: int, month: int):
             """,
             (year, month),
         ).fetchall()
+        extras = _extras_for_month(conn, year, month)
+        month_events = build_month_events(year, month, extras)
+        event_dates = [e["date"] for e in month_events]
+        assign_rows = conn.execute(
+            """
+            SELECT event_date, area, volunteer_id
+            FROM assignment
+            WHERE year = ? AND month = ? AND volunteer_id IS NOT NULL
+            """,
+            (year, month),
+        ).fetchall()
+        av_rows = conn.execute(
+            """
+            SELECT volunteer_id, event_date, available
+            FROM availability
+            WHERE substr(event_date, 1, 7) = ?
+            """,
+            (f"{year:04d}-{month:02d}",),
+        ).fetchall()
+        vol_rows = conn.execute("SELECT id, name FROM volunteer").fetchall()
+
+    assignments_by_date: dict[str, dict[str, int | None]] = {}
+    for r in assign_rows:
+        assignments_by_date.setdefault(r["event_date"], {})[r["area"]] = int(
+            r["volunteer_id"]
+        )
+    availability: dict[int, dict[str, bool]] = {}
+    for r in av_rows:
+        availability.setdefault(int(r["volunteer_id"]), {})[r["event_date"]] = bool(
+            r["available"]
+        )
+    volunteer_names = {int(r["id"]): r["name"] for r in vol_rows}
+    worship_alerts = detect_no_worship_day_alerts(
+        event_dates,
+        AREAS,
+        assignments_by_date,
+        availability,
+        volunteer_names,
+    )
 
     by_vol: dict[int, dict[str, Any]] = {}
     for r in rows:
@@ -958,7 +998,13 @@ def stats(year: int, month: int):
         key=lambda x: (-x["count"], (x["name"] or "").lower()),
     )
     never_assigned = [{"name": r["name"]} for r in never_rows]
-    return jsonify({"assigned": assigned, "never_assigned": never_assigned})
+    return jsonify(
+        {
+            "assigned": assigned,
+            "never_assigned": never_assigned,
+            "worship_alerts": worship_alerts,
+        }
+    )
 
 
 def main():

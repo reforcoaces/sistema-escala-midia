@@ -278,3 +278,69 @@ def assign_greedy_fair(
             counts[refill] += 1
 
     return result
+
+
+def detect_no_worship_day_alerts(
+    event_dates: list[str],
+    areas: list[str],
+    assignments: dict[str, dict[str, int | None]],
+    availability: dict[int, dict[str, bool]],
+    volunteer_names: dict[int, str],
+) -> list[dict[str, Any]]:
+    """
+    Voluntários que, na escala do mês, não ficam com nenhum culto só para cultuar.
+
+    - ``all_events``: escalada em todos os cultos do mês (qualquer função conta).
+    - ``all_available``: escalada em todo dia em que marcou disponibilidade explícita
+      (ex.: só domingo disponível e escalada em todos os domingos).
+
+    Apenas informativo; não deve bloquear escalação automática ou manual.
+    """
+    if not event_dates:
+        return []
+    event_set = frozenset(event_dates)
+
+    assigned_by: dict[int, set[str]] = defaultdict(set)
+    for ed in event_dates:
+        row = assignments.get(ed) or {}
+        for area in areas:
+            vid = row.get(area)
+            if vid is not None:
+                assigned_by[int(vid)].add(ed)
+
+    alerts: list[dict[str, Any]] = []
+    for vid, assigned_dates in assigned_by.items():
+        name = volunteer_names.get(vid) or f"#{vid}"
+        if assigned_dates >= event_set:
+            n = len(event_dates)
+            alerts.append(
+                {
+                    "volunteer_id": vid,
+                    "name": name,
+                    "kind": "all_events",
+                    "detail": (
+                        f"Escalada em todos os {n} cultos do mês — "
+                        "nenhum dia só para cultuar nesta escala."
+                    ),
+                }
+            )
+            continue
+        avail_dates = {
+            d for d in event_dates if availability.get(vid, {}).get(d) is True
+        }
+        if avail_dates and avail_dates <= assigned_dates:
+            n = len(avail_dates)
+            alerts.append(
+                {
+                    "volunteer_id": vid,
+                    "name": name,
+                    "kind": "all_available",
+                    "detail": (
+                        f"Escalada em todos os {n} dia(s) em que marcou disponibilidade — "
+                        "vale garantir outro dia para cultuar."
+                    ),
+                }
+            )
+
+    alerts.sort(key=lambda x: (x["name"] or "").lower())
+    return alerts
