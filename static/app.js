@@ -9,6 +9,8 @@ let events = [];
 let extras = [];
 let availability = {};
 let assignments = {};
+/** Modo admin: permite exceções (menor no domingo, mais de uma função no culto). */
+let adminMode = false;
 /** Oficina de comunicação (domingos 7h30–9h30) na pré-visualização / PDF / PNG. */
 let includeTraining = false;
 
@@ -794,8 +796,34 @@ function volunteerIdsDuplicatedOnDate(eventDate) {
   return dup;
 }
 
+function cellOverrides(eventDate, area) {
+  const cell = (assignments[eventDate] && assignments[eventDate][area]) || {};
+  return cell.overrides || { teen_sunday: false, multi_area: false };
+}
+
+function initAdminMode() {
+  try {
+    adminMode = localStorage.getItem("adminMode") === "1";
+  } catch {
+    adminMode = false;
+  }
+  const chk = $("#chk-admin-mode");
+  if (chk) {
+    chk.checked = adminMode;
+    chk.addEventListener("change", () => {
+      adminMode = chk.checked;
+      try {
+        localStorage.setItem("adminMode", adminMode ? "1" : "0");
+      } catch {
+        /* ignore */
+      }
+      renderManualEditor();
+    });
+  }
+}
+
 /** Problemas na célula (disponibilidade, aptidão, duplicidade no culto). */
-function assignmentCellIssues(eventDate, area, volunteerId) {
+function assignmentCellIssues(eventDate, area, volunteerId, opts = {}) {
   const issues = [];
   if (volunteerId == null || volunteerId === "") return issues;
   const id = +volunteerId;
@@ -806,6 +834,9 @@ function assignmentCellIssues(eventDate, area, volunteerId) {
     issues.push("Voluntário não encontrado no cadastro");
     return issues;
   }
+
+  const ov = cellOverrides(eventDate, area);
+  const hideOverridden = opts.forFinalSchedule === true;
 
   const apt = v.areas || [];
   if (!apt.includes(area)) {
@@ -819,13 +850,17 @@ function assignmentCellIssues(eventDate, area, volunteerId) {
 
   const dups = volunteerIdsDuplicatedOnDate(eventDate);
   if (dups.has(id)) {
-    issues.push("Mesma pessoa em mais de uma função neste culto");
+    if (!(hideOverridden && ov.multi_area)) {
+      issues.push("Mesma pessoa em mais de uma função neste culto");
+    }
   }
 
   if (teenSundayForbiddenVol(v.birth_date, eventDate)) {
-    issues.push(
-      "Até 15 anos: não escalar aos domingos (exceto 1º domingo — Santa Ceia)"
-    );
+    if (!(hideOverridden && ov.teen_sunday)) {
+      issues.push(
+        "Até 15 anos: não escalar aos domingos (exceto 1º domingo — Santa Ceia)"
+      );
+    }
   }
 
   return issues;
@@ -937,7 +972,9 @@ function renderScheduleTable() {
             EMPTY_SCHEDULE_PLACEHOLDER
           )}</span>`
         : escapeHtml(cell.name || "—");
-      const issues = assignmentCellIssues(ev.date, a, vid);
+      const issues = assignmentCellIssues(ev.date, a, vid, {
+        forFinalSchedule: true,
+      });
       const inv = issues.length > 0;
       if (inv) invalidCount += 1;
       const baseCls = a === "RESPONSAVEL" ? "area-resp" : "";
@@ -962,16 +999,18 @@ function renderScheduleTable() {
 function renderManualEditor() {
   const ed = $("#manual-editor");
   if (!ed) return;
-  let h =
-    "<p style='font-size:0.85rem;color:var(--muted)'>Ajuste manual por célula (opcional):</p>";
+  let h = adminMode
+    ? `<p class="admin-mode-active">Modo administrador ativo — exceções registradas não aparecem na pré-visualização nem no PDF.</p>`
+    : `<p style='font-size:0.85rem;color:var(--muted)'>Ajuste manual por célula (opcional). Ative o modo administrador acima para exceções (menor no domingo, mais de uma função no mesmo culto).</p>`;
   for (const ev of events) {
     const trainManual =
       includeTraining && isSundayIso(ev.date)
         ? `<p class="manual-training-hint">${escapeHtml(TRAINING_NOTE_HTML)}</p>`
         : "";
-    h += `<div class="panel" style="padding:0.6rem"><strong>${escapeHtml(fmtBR(ev.date))}</strong> <span style="color:var(--muted);font-weight:500">${whenLineForManual(ev)}</span> — ${escapeHtml(ev.label)}${trainManual}<div class="row" style="margin-top:0.5rem;align-items:flex-start">`;
+    h += `<div class="panel manual-culto-block" style="padding:0.6rem"><strong>${escapeHtml(fmtBR(ev.date))}</strong> <span style="color:var(--muted);font-weight:500">${whenLineForManual(ev)}</span> — ${escapeHtml(ev.label)}${trainManual}<div class="manual-area-grid">`;
     for (const a of areas) {
       const cell = (assignments[ev.date] && assignments[ev.date][a]) || {};
+      const ov = cellOverrides(ev.date, a);
       const issues = assignmentCellIssues(ev.date, a, cell.volunteer_id);
       const inv = issues.length > 0;
       const tip = inv ? escapeHtml(issues.join(" · ")) : "";
@@ -980,11 +1019,11 @@ function renderManualEditor() {
         '<option value="">— vazio —</option>' +
         volunteers
           .map((v) => {
-            const dis =
+            const teenBlock =
+              !adminMode &&
               teenSundayForbiddenVol(v.birth_date, ev.date) &&
-              cell.volunteer_id !== v.id
-                ? " disabled"
-                : "";
+              cell.volunteer_id !== v.id;
+            const dis = teenBlock ? " disabled" : "";
             const sel = cell.volunteer_id === v.id ? "selected" : "";
             const title = teenSundayForbiddenVol(v.birth_date, ev.date)
               ? ' title="Até 15 anos: não neste domingo (exceto 1º domingo)"'
@@ -992,7 +1031,41 @@ function renderManualEditor() {
             return `<option value="${v.id}" ${sel}${dis}${title}>${escapeHtml(v.name)}</option>`;
           })
           .join("");
-      h += `<label class="${lblCls.trim()}" ${tip ? `title="${tip}"` : ""}><span>${escapeHtml(a)}</span><select data-d="${escapeHtml(ev.date)}" data-a="${escapeHtml(a)}">${opts}</select></label>`;
+      const teenExc =
+        adminMode &&
+        cell.volunteer_id &&
+        teenSundayForbiddenVol(
+          volunteers.find((x) => x.id === cell.volunteer_id)?.birth_date,
+          ev.date
+        );
+      const dupExc =
+        adminMode &&
+        cell.volunteer_id &&
+        volunteerIdsDuplicatedOnDate(ev.date).has(cell.volunteer_id);
+      const excHtml =
+        adminMode && (teenExc || dupExc || ov.teen_sunday || ov.multi_area)
+          ? `<div class="admin-exc-row">
+              ${
+                teenExc || ov.teen_sunday
+                  ? `<label class="chk admin-exc"><input type="checkbox" data-exc="teen_sunday" data-d="${escapeHtml(ev.date)}" data-a="${escapeHtml(a)}" ${
+                      ov.teen_sunday ? "checked" : ""
+                    }/> Exceção: menor no domingo</label>`
+                  : ""
+              }
+              ${
+                dupExc || ov.multi_area
+                  ? `<label class="chk admin-exc"><input type="checkbox" data-exc="multi_area" data-d="${escapeHtml(ev.date)}" data-a="${escapeHtml(a)}" ${
+                      ov.multi_area ? "checked" : ""
+                    }/> Exceção: mais de uma função</label>`
+                  : ""
+              }
+            </div>`
+          : "";
+      const ovBadge =
+        adminMode && (ov.teen_sunday || ov.multi_area)
+          ? `<span class="admin-override-badge">exceção ativa</span>`
+          : "";
+      h += `<div class="manual-area-cell"><label class="${lblCls.trim()}" ${tip ? `title="${tip}"` : ""}><span>${escapeHtml(a)} ${ovBadge}</span><select data-d="${escapeHtml(ev.date)}" data-a="${escapeHtml(a)}">${opts}</select></label>${excHtml}</div>`;
     }
     h += "</div></div>";
   }
@@ -1008,11 +1081,35 @@ function renderManualEditor() {
             event_date: sel.dataset.d,
             area: sel.dataset.a,
             volunteer_id,
+            admin: adminMode,
           }),
         });
         assignments = await api(`/api/month/${ym.year}/${ym.month}/assignments`);
         renderScheduleTable();
         await loadStats();
+      } catch (e) {
+        alert(e.message);
+        await loadMonthData();
+      }
+    });
+  });
+  ed.querySelectorAll("input[data-exc]").forEach((cb) => {
+    cb.addEventListener("change", async () => {
+      if (!adminMode) return;
+      const ym = ymFromInputs();
+      const payload = {
+        event_date: cb.dataset.d,
+        area: cb.dataset.a,
+        admin: true,
+      };
+      payload[cb.dataset.exc] = cb.checked;
+      try {
+        await api(`/api/month/${ym.year}/${ym.month}/assignment-override`, {
+          method: "PATCH",
+          body: JSON.stringify(payload),
+        });
+        assignments = await api(`/api/month/${ym.year}/${ym.month}/assignments`);
+        renderScheduleTable();
       } catch (e) {
         alert(e.message);
         await loadMonthData();
@@ -1191,6 +1288,7 @@ function initThemeToggle() {
 
 document.addEventListener("DOMContentLoaded", async () => {
   initThemeToggle();
+  initAdminMode();
   initMonthPicker();
   await loadAreas();
   renderAreaCheckboxes("#new-vol-areas");

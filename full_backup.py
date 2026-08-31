@@ -8,10 +8,11 @@ from typing import Any
 from logic import AREAS
 
 FORMAT = "sistema-escala-midia-full"
-VERSION = 1
+VERSION = 2
 
 _DELETE_ORDER = (
     "birthday_notification_sent",
+    "assignment_override",
     "assignment",
     "availability",
     "volunteer_area",
@@ -65,6 +66,16 @@ def build_full_backup_payload(conn: sqlite3.Connection) -> dict[str, Any]:
             """
         ).fetchall()
     ]
+    assignment_override = [
+        _row_dict(r)
+        for r in conn.execute(
+            """
+            SELECT year, month, event_date, area, teen_sunday, multi_area
+            FROM assignment_override
+            ORDER BY year, month, event_date, area
+            """
+        ).fetchall()
+    ]
     month_options = [
         _row_dict(r)
         for r in conn.execute(
@@ -95,6 +106,7 @@ def build_full_backup_payload(conn: sqlite3.Connection) -> dict[str, Any]:
         "extra_event": extra_event,
         "availability": availability,
         "assignment": assignment,
+        "assignment_override": assignment_override,
         "month_options": month_options,
         "app_setting": app_setting,
         "birthday_notification_sent": birthday_notification_sent,
@@ -252,6 +264,27 @@ def restore_full_backup(conn: sqlite3.Connection, data: dict[str, Any]) -> dict[
             )
         assigns.append((y, m, ed, area, vid_opt))
 
+    overrides: list[tuple[int, int, str, str, int, int]] = []
+    seen_ov: set[tuple[int, int, str, str]] = set()
+    for i, raw in enumerate(data.get("assignment_override") or []):
+        if not isinstance(raw, dict):
+            raise ValueError(f"assignment_override #{i + 1}: objeto inválido.")
+        y = _as_int(raw.get("year"), "year")
+        m = _as_int(raw.get("month"), "month")
+        if not 1 <= m <= 12:
+            raise ValueError(f"assignment_override: mês inválido ({m}).")
+        ed = _validate_iso_date(str(raw.get("event_date") or ""), "event_date")
+        area = (raw.get("area") or "").strip()
+        if area not in areas_set:
+            raise ValueError(f"assignment_override: área inválida «{area}».")
+        sk = (y, m, ed, area)
+        if sk in seen_ov:
+            raise ValueError(f"assignment_override duplicado: {y}-{m:02d} {ed} «{area}».")
+        seen_ov.add(sk)
+        ts = _as_bool_int(raw.get("teen_sunday"), "teen_sunday")
+        ma = _as_bool_int(raw.get("multi_area"), "multi_area")
+        overrides.append((y, m, ed, area, ts, ma))
+
     mopts: list[tuple[int, int, int]] = []
     seen_mo: set[tuple[int, int]] = set()
     for i, raw in enumerate(data.get("month_options") or []):
@@ -336,6 +369,14 @@ def restore_full_backup(conn: sqlite3.Connection, data: dict[str, Any]) -> dict[
         )
         conn.executemany(
             """
+            INSERT INTO assignment_override
+                (year, month, event_date, area, teen_sunday, multi_area)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            overrides,
+        )
+        conn.executemany(
+            """
             INSERT INTO month_options (year, month, include_training)
             VALUES (?, ?, ?)
             """,
@@ -374,6 +415,7 @@ def restore_full_backup(conn: sqlite3.Connection, data: dict[str, Any]) -> dict[
         "extra_event": len(extras),
         "availability": len(avail),
         "assignment": len(assigns),
+        "assignment_override": len(overrides),
         "month_options": len(mopts),
         "app_setting": len(settings),
         "birthday_notification_sent": len(bdays),

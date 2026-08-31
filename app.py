@@ -378,6 +378,154 @@ def _extras_for_month(
     return [(r["event_date"], r["label"], r["event_time"]) for r in rows]
 
 
+def _override_map_for_month(
+    conn, year: int, month: int
+) -> dict[tuple[str, str], dict[str, bool]]:
+    rows = conn.execute(
+        """
+        SELECT event_date, area, teen_sunday, multi_area
+        FROM assignment_override
+        WHERE year = ? AND month = ?
+        """,
+        (year, month),
+    ).fetchall()
+    out: dict[tuple[str, str], dict[str, bool]] = {}
+    for r in rows:
+        out[(r["event_date"], r["area"])] = {
+            "teen_sunday": bool(r["teen_sunday"]),
+            "multi_area": bool(r["multi_area"]),
+        }
+    return out
+
+
+def _upsert_assignment_override(
+    conn,
+    year: int,
+    month: int,
+    event_date: str,
+    area: str,
+    *,
+    teen_sunday: bool | None = None,
+    multi_area: bool | None = None,
+) -> None:
+    row = conn.execute(
+        """
+        SELECT teen_sunday, multi_area
+        FROM assignment_override
+        WHERE year = ? AND month = ? AND event_date = ? AND area = ?
+        """,
+        (year, month, event_date, area),
+    ).fetchone()
+    t = int(teen_sunday) if teen_sunday is not None else (int(row["teen_sunday"]) if row else 0)
+    m = int(multi_area) if multi_area is not None else (int(row["multi_area"]) if row else 0)
+    if t or m:
+        conn.execute(
+            """
+            INSERT INTO assignment_override
+                (year, month, event_date, area, teen_sunday, multi_area)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(year, month, event_date, area) DO UPDATE SET
+                teen_sunday = excluded.teen_sunday,
+                multi_area = excluded.multi_area
+            """,
+            (year, month, event_date, area, t, m),
+        )
+    else:
+        conn.execute(
+            """
+            DELETE FROM assignment_override
+            WHERE year = ? AND month = ? AND event_date = ? AND area = ?
+            """,
+            (year, month, event_date, area),
+        )
+
+
+def _assignments_on_date(
+    conn, year: int, month: int, event_date: str
+) -> list[sqlite3.Row]:
+    return conn.execute(
+        """
+        SELECT area, volunteer_id
+        FROM assignment
+        WHERE year = ? AND month = ? AND event_date = ? AND volunteer_id IS NOT NULL
+        """,
+        (year, month, event_date),
+    ).fetchall()
+
+
+def _duplicate_volunteer_ids_on_date(
+    conn, year: int, month: int, event_date: str
+) -> set[int]:
+    rows = _assignments_on_date(conn, year, month, event_date)
+    counts: dict[int, int] = {}
+    for r in rows:
+        vid = int(r["volunteer_id"])
+        counts[vid] = counts.get(vid, 0) + 1
+    return {vid for vid, n in counts.items() if n > 1}
+
+
+def _apply_admin_overrides_for_date(
+    conn,
+    year: int,
+    month: int,
+    event_date: str,
+    *,
+    changed_area: str | None = None,
+    changed_volunteer_id: int | None = None,
+    admin: bool = False,
+) -> None:
+    """Grava ou limpa exceções de admin após alteração manual da escala."""
+    rows = _assignments_on_date(conn, year, month, event_date)
+    by_area = {r["area"]: int(r["volunteer_id"]) for r in rows}
+    dup_ids = _duplicate_volunteer_ids_on_date(conn, year, month, event_date)
+    existing = _override_map_for_month(conn, year, month)
+
+    if changed_area and changed_volunteer_id is None:
+        _upsert_assignment_override(
+            conn, year, month, event_date, changed_area, teen_sunday=False, multi_area=False
+        )
+        existing.pop((event_date, changed_area), None)
+
+    for area in AREAS:
+        vid = by_area.get(area)
+        if vid is None:
+            if (event_date, area) in existing:
+                _upsert_assignment_override(
+                    conn, year, month, event_date, area, teen_sunday=False, multi_area=False
+                )
+            continue
+
+        ov = existing.get((event_date, area), {})
+        teen_flag = ov.get("teen_sunday", False)
+        multi_flag = ov.get("multi_area", False)
+
+        brow = conn.execute(
+            "SELECT birth_date FROM volunteer WHERE id = ?", (vid,)
+        ).fetchone()
+        teen_forbidden = teen_sunday_escala_forbidden(
+            brow["birth_date"] if brow else None, event_date
+        )
+
+        if admin and area == changed_area and teen_forbidden:
+            teen_flag = True
+        elif not teen_forbidden:
+            teen_flag = False
+
+        if vid in dup_ids and (admin or multi_flag):
+            multi_flag = True
+        else:
+            multi_flag = False
+
+        _upsert_assignment_override(
+            conn,
+            year,
+            month,
+            event_date,
+            area,
+            teen_sunday=teen_flag,
+            multi_area=multi_flag,
+        )
+
 @app.route("/api/month/<int:year>/<int:month>/events", methods=["GET"])
 def month_events(year: int, month: int):
     if not 1 <= month <= 12:
@@ -728,6 +876,10 @@ def generate_schedule(year: int, month: int):
             "DELETE FROM assignment WHERE year = ? AND month = ?",
             (year, month),
         )
+        conn.execute(
+            "DELETE FROM assignment_override WHERE year = ? AND month = ?",
+            (year, month),
+        )
         for (ed, area), vid in result.items():
             conn.execute(
                 """
@@ -752,11 +904,17 @@ def get_assignments(year: int, month: int):
             """,
             (year, month),
         ).fetchall()
+        overrides = _override_map_for_month(conn, year, month)
     cells: dict[str, dict[str, Any]] = {}
     for r in rows:
+        ov = overrides.get((r["event_date"], r["area"]), {})
         cells.setdefault(r["event_date"], {})[r["area"]] = {
             "volunteer_id": r["volunteer_id"],
             "name": r["name"] or None,
+            "overrides": {
+                "teen_sunday": ov.get("teen_sunday", False),
+                "multi_area": ov.get("multi_area", False),
+            },
         }
     return jsonify(cells)
 
@@ -767,12 +925,13 @@ def patch_assignment(year: int, month: int):
     date_iso = data.get("event_date")
     area = data.get("area")
     volunteer_id = data.get("volunteer_id")
+    admin = bool(data.get("admin"))
     if not date_iso or area not in AREAS:
         return jsonify({"error": "event_date e area válidos são obrigatórios"}), 400
     if volunteer_id is not None:
         volunteer_id = int(volunteer_id) if volunteer_id else None
     with connection() as conn:
-        if volunteer_id:
+        if volunteer_id and not admin:
             brow = conn.execute(
                 "SELECT birth_date FROM volunteer WHERE id = ?", (volunteer_id,)
             ).fetchone()
@@ -783,7 +942,8 @@ def patch_assignment(year: int, month: int):
                         {
                             "error": (
                                 "Menores de 16 anos não podem ser escalados neste domingo "
-                                "(exceto no 1º domingo do mês — Santa Ceia)."
+                                "(exceto no 1º domingo do mês — Santa Ceia). "
+                                "Ative o modo administrador para aplicar exceção."
                             )
                         }
                     ),
@@ -798,6 +958,49 @@ def patch_assignment(year: int, month: int):
             """,
             (year, month, date_iso, area, volunteer_id),
         )
+        _apply_admin_overrides_for_date(
+            conn,
+            year,
+            month,
+            str(date_iso),
+            changed_area=area,
+            changed_volunteer_id=volunteer_id,
+            admin=admin,
+        )
+    return jsonify({"ok": True})
+
+
+@app.route("/api/month/<int:year>/<int:month>/assignment-override", methods=["PATCH"])
+def patch_assignment_override(year: int, month: int):
+    data = request.get_json(force=True, silent=True) or {}
+    if not data.get("admin"):
+        return jsonify({"error": "Modo administrador é obrigatório."}), 403
+    date_iso = data.get("event_date")
+    area = data.get("area")
+    if not date_iso or area not in AREAS:
+        return jsonify({"error": "event_date e area válidos são obrigatórios"}), 400
+    teen = data.get("teen_sunday")
+    multi = data.get("multi_area")
+    if teen is None and multi is None:
+        return jsonify({"error": "Informe teen_sunday ou multi_area."}), 400
+    with connection() as conn:
+        kwargs: dict[str, bool | None] = {}
+        if teen is not None:
+            kwargs["teen_sunday"] = bool(teen)
+        if multi is not None:
+            kwargs["multi_area"] = bool(multi)
+        _upsert_assignment_override(
+            conn, year, month, str(date_iso), area, **kwargs
+        )
+        if multi is not None:
+            _apply_admin_overrides_for_date(
+                conn,
+                year,
+                month,
+                str(date_iso),
+                changed_area=area,
+                admin=True,
+            )
     return jsonify({"ok": True})
 
 

@@ -85,6 +85,16 @@ def init_db():
                 year INTEGER NOT NULL,
                 PRIMARY KEY (volunteer_id, year)
             );
+
+            CREATE TABLE IF NOT EXISTS assignment_override (
+                year INTEGER NOT NULL,
+                month INTEGER NOT NULL,
+                event_date TEXT NOT NULL,
+                area TEXT NOT NULL,
+                teen_sunday INTEGER NOT NULL DEFAULT 0,
+                multi_area INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (year, month, event_date, area)
+            );
             """
         )
         _migrate_schema(conn)
@@ -111,6 +121,19 @@ def _migrate_schema(conn):
             volunteer_id INTEGER NOT NULL REFERENCES volunteer(id) ON DELETE CASCADE,
             year INTEGER NOT NULL,
             PRIMARY KEY (volunteer_id, year)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS assignment_override (
+            year INTEGER NOT NULL,
+            month INTEGER NOT NULL,
+            event_date TEXT NOT NULL,
+            area TEXT NOT NULL,
+            teen_sunday INTEGER NOT NULL DEFAULT 0,
+            multi_area INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (year, month, event_date, area)
         )
         """
     )

@@ -661,6 +661,96 @@ html[data-theme="light"] .stats-worship-wrap {
   line-height: 1.4;
 }
 
+.admin-mode-toggle {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-start;
+  margin: 0 0 0.85rem;
+  padding: 0.65rem 0.75rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+
+.admin-mode-toggle input {
+  margin-top: 0.2rem;
+  flex-shrink: 0;
+}
+
+.admin-mode-active {
+  margin: 0 0 0.75rem;
+  padding: 0.5rem 0.65rem;
+  font-size: 0.82rem;
+  border-radius: 6px;
+  background: #1a2a3d;
+  color: #9ec5fe;
+  border: 1px solid #2f4f7a;
+}
+
+html[data-theme="light"] .admin-mode-active {
+  background: #e7f1ff;
+  color: #084298;
+  border-color: #b6d4fe;
+}
+
+.manual-area-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem 1rem;
+  margin-top: 0.5rem;
+  align-items: flex-start;
+}
+
+.manual-area-cell {
+  min-width: 150px;
+  flex: 1 1 150px;
+}
+
+.manual-area-cell label span {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+
+.admin-override-badge {
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: #856404;
+  background: #fff3cd;
+  border: 1px solid #ffeeba;
+  border-radius: 4px;
+  padding: 0.05rem 0.35rem;
+}
+
+html[data-theme="light"] .admin-override-badge {
+  color: #664d03;
+}
+
+.admin-exc-row {
+  margin-top: 0.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+label.chk.admin-exc {
+  font-size: 0.72rem;
+  color: var(--muted);
+  display: flex;
+  gap: 0.35rem;
+  align-items: flex-start;
+  margin: 0;
+}
+
+label.chk.admin-exc input {
+  margin-top: 0.1rem;
+}
+
 .vol-summary {
   margin-bottom: 1rem;
   padding: 0.65rem 0.85rem;
