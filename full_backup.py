@@ -5,13 +5,14 @@ import datetime as dt
 import sqlite3
 from typing import Any
 
-from logic import AREAS
+from logic import AREAS, ATTENDANCE_STATUSES
 
 FORMAT = "sistema-escala-midia-full"
-VERSION = 2
+VERSION = 3
 
 _DELETE_ORDER = (
     "birthday_notification_sent",
+    "culto_attendance",
     "assignment_override",
     "assignment",
     "availability",
@@ -76,6 +77,17 @@ def build_full_backup_payload(conn: sqlite3.Connection) -> dict[str, Any]:
             """
         ).fetchall()
     ]
+    culto_attendance = [
+        _row_dict(r)
+        for r in conn.execute(
+            """
+            SELECT id, event_date, volunteer_id, status, note,
+                   recorded_by, recorded_at, updated_by, updated_at
+            FROM culto_attendance
+            ORDER BY event_date, volunteer_id
+            """
+        ).fetchall()
+    ]
     month_options = [
         _row_dict(r)
         for r in conn.execute(
@@ -107,6 +119,7 @@ def build_full_backup_payload(conn: sqlite3.Connection) -> dict[str, Any]:
         "availability": availability,
         "assignment": assignment,
         "assignment_override": assignment_override,
+        "culto_attendance": culto_attendance,
         "month_options": month_options,
         "app_setting": app_setting,
         "birthday_notification_sent": birthday_notification_sent,
@@ -285,6 +298,36 @@ def restore_full_backup(conn: sqlite3.Connection, data: dict[str, Any]) -> dict[
         ma = _as_bool_int(raw.get("multi_area"), "multi_area")
         overrides.append((y, m, ed, area, ts, ma))
 
+    att_rows: list[tuple[str, int, str, str | None, str, str, str | None, str | None]] = []
+    seen_att: set[tuple[str, int]] = set()
+    for i, raw in enumerate(data.get("culto_attendance") or []):
+        if not isinstance(raw, dict):
+            raise ValueError(f"culto_attendance #{i + 1}: objeto inválido.")
+        ed = _validate_iso_date(str(raw.get("event_date") or ""), "event_date")
+        vid = _as_int(raw.get("volunteer_id"), "volunteer_id")
+        if vid not in seen_ids:
+            raise ValueError(f"culto_attendance: voluntário id {vid} não existe.")
+        ak = (ed, vid)
+        if ak in seen_att:
+            raise ValueError(f"culto_attendance duplicado: {ed} voluntário {vid}.")
+        seen_att.add(ak)
+        status = (raw.get("status") or "").strip()
+        if status not in ATTENDANCE_STATUSES:
+            raise ValueError(f"culto_attendance: status inválido «{status}».")
+        note = raw.get("note")
+        note_s = (str(note).strip() if note is not None else "") or None
+        recorded_by = (raw.get("recorded_by") or "").strip()
+        if not recorded_by:
+            raise ValueError("culto_attendance: recorded_by obrigatório.")
+        recorded_at = (raw.get("recorded_at") or "").strip()
+        if not recorded_at:
+            raise ValueError("culto_attendance: recorded_at obrigatório.")
+        ub = raw.get("updated_by")
+        ub_s = (str(ub).strip() if ub is not None else "") or None
+        ua = raw.get("updated_at")
+        ua_s = (str(ua).strip() if ua is not None else "") or None
+        att_rows.append((ed, vid, status, note_s, recorded_by, recorded_at, ub_s, ua_s))
+
     mopts: list[tuple[int, int, int]] = []
     seen_mo: set[tuple[int, int]] = set()
     for i, raw in enumerate(data.get("month_options") or []):
@@ -377,6 +420,15 @@ def restore_full_backup(conn: sqlite3.Connection, data: dict[str, Any]) -> dict[
         )
         conn.executemany(
             """
+            INSERT INTO culto_attendance
+                (event_date, volunteer_id, status, note,
+                 recorded_by, recorded_at, updated_by, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            att_rows,
+        )
+        conn.executemany(
+            """
             INSERT INTO month_options (year, month, include_training)
             VALUES (?, ?, ?)
             """,
@@ -416,6 +468,7 @@ def restore_full_backup(conn: sqlite3.Connection, data: dict[str, Any]) -> dict[
         "availability": len(avail),
         "assignment": len(assigns),
         "assignment_override": len(overrides),
+        "culto_attendance": len(att_rows),
         "month_options": len(mopts),
         "app_setting": len(settings),
         "birthday_notification_sent": len(bdays),

@@ -95,6 +95,19 @@ def init_db():
                 multi_area INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY (year, month, event_date, area)
             );
+
+            CREATE TABLE IF NOT EXISTS culto_attendance (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_date TEXT NOT NULL,
+                volunteer_id INTEGER NOT NULL REFERENCES volunteer(id) ON DELETE CASCADE,
+                status TEXT NOT NULL,
+                note TEXT,
+                recorded_by TEXT NOT NULL,
+                recorded_at TEXT NOT NULL,
+                updated_by TEXT,
+                updated_at TEXT,
+                UNIQUE (event_date, volunteer_id)
+            );
             """
         )
         _migrate_schema(conn)
@@ -134,6 +147,22 @@ def _migrate_schema(conn):
             teen_sunday INTEGER NOT NULL DEFAULT 0,
             multi_area INTEGER NOT NULL DEFAULT 0,
             PRIMARY KEY (year, month, event_date, area)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS culto_attendance (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_date TEXT NOT NULL,
+            volunteer_id INTEGER NOT NULL REFERENCES volunteer(id) ON DELETE CASCADE,
+            status TEXT NOT NULL,
+            note TEXT,
+            recorded_by TEXT NOT NULL,
+            recorded_at TEXT NOT NULL,
+            updated_by TEXT,
+            updated_at TEXT,
+            UNIQUE (event_date, volunteer_id)
         )
         """
     )

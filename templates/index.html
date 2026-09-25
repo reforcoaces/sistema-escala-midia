@@ -66,6 +66,7 @@
       <nav class="tabs">
         <button type="button" class="active" data-tab="vol">Voluntários</button>
         <button type="button" data-tab="month">Mês e escala</button>
+        <button type="button" data-tab="attendance">Acompanhamento</button>
         <button type="button" data-tab="birthdays">Aniversariantes</button>
       </nav>
 
@@ -221,6 +222,14 @@
             <button type="button" class="secondary" id="btn-png">Baixar PNG</button>
             <button type="button" class="secondary" id="btn-jpg">Baixar JPG</button>
           </div>
+          <div id="attendance-fitness-wrap" class="attendance-fitness-wrap hidden">
+            <p class="stats-subtitle">Acompanhamento: quem não está cultuando</p>
+            <p class="muted attendance-fitness-intro">
+              Com base nos registros da aba Acompanhamento. Não bloqueia a escala —
+              use como alerta; no modo administrador você pode seguir com exceção.
+            </p>
+            <ul id="attendance-fitness-list" class="attendance-fitness-list"></ul>
+          </div>
         </div>
 
         <div class="panel">
@@ -264,6 +273,55 @@
             <div id="stats-never" class="stats-never-list" aria-label="Voluntários sem escala no mês"></div>
           </div>
           <p id="stats-all-assigned" class="stats-all-assigned muted hidden"></p>
+        </div>
+      </section>
+
+      <section id="tab-attendance" class="tab-panel hidden">
+        <div class="panel">
+          <h2>Acompanhamento de cultos</h2>
+          <p class="muted" style="font-size: 0.85rem; margin: 0 0 0.85rem; line-height: 1.45">
+            Marque, para cada culto, se a pessoa <strong>cultou</strong>, estava
+            <strong>servindo</strong>, teve <strong>ausência justificada</strong> ou ficou
+            <strong>ausente</strong>. O objetivo é incentivar cultuar — não só servir.
+            Cultos regulares: quintas (20h) e domingos (10h); use a data também para cultos
+            extras (ex.: sábado).
+          </p>
+          <div class="row" style="align-items: flex-end; flex-wrap: wrap; gap: 0.75rem">
+            <label>
+              Data do culto
+              <input type="date" id="att-date" />
+            </label>
+            <label>
+              Administrador que registra
+              <input
+                type="text"
+                id="att-admin-name"
+                placeholder="Seu nome"
+                autocomplete="name"
+                style="min-width: 180px"
+              />
+            </label>
+            <button type="button" id="btn-att-load" class="secondary">Carregar</button>
+            <button type="button" id="btn-att-save">Salvar registro do culto</button>
+          </div>
+          <div id="att-msg" class="message hidden" style="margin-top: 0.65rem"></div>
+          <div id="att-summary" class="att-summary hidden" aria-live="polite"></div>
+          <div id="att-list" class="att-list" style="margin-top: 0.85rem"></div>
+        </div>
+
+        <div class="panel">
+          <h2>Histórico individual</h2>
+          <div class="row" style="align-items: flex-end; flex-wrap: wrap; gap: 0.75rem">
+            <label>
+              Voluntário
+              <select id="att-hist-volunteer">
+                <option value="">— selecione —</option>
+              </select>
+            </label>
+            <button type="button" id="btn-att-hist" class="secondary">Ver histórico</button>
+          </div>
+          <div id="att-hist-summary" class="att-summary hidden" style="margin-top: 0.75rem"></div>
+          <div id="att-hist-body" style="margin-top: 0.75rem; overflow-x: auto"></div>
         </div>
       </section>
 

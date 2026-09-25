@@ -76,6 +76,7 @@ async function loadVolunteers() {
   renderVolunteers();
   renderVolunteerSummary();
   populateAvailVolunteer();
+  populateAttHistVolunteer();
 }
 
 /** Resumo: total cadastrado e quantos por área (usa lista global `areas`). */
@@ -395,6 +396,7 @@ async function loadMonthData() {
   renderAvailabilityEditor();
   renderScheduleTable();
   await loadStats();
+  await loadAttendanceFitness();
 }
 
 /** Texto "Nx ÁREA" para estatísticas por função (áreas já escapadas no HTML). */
@@ -818,6 +820,7 @@ function initAdminMode() {
         /* ignore */
       }
       renderManualEditor();
+      loadAttendanceFitness();
     });
   }
 }
@@ -1025,12 +1028,25 @@ function renderManualEditor() {
               cell.volunteer_id !== v.id;
             const dis = teenBlock ? " disabled" : "";
             const sel = cell.volunteer_id === v.id ? "selected" : "";
-            const title = teenSundayForbiddenVol(v.birth_date, ev.date)
-              ? ' title="Até 15 anos: não neste domingo (exceto 1º domingo)"'
+            const fit = attendanceFitnessById[v.id];
+            const teenTitle = teenSundayForbiddenVol(v.birth_date, ev.date)
+              ? "Até 15 anos: não neste domingo (exceto 1º domingo)"
               : "";
-            return `<option value="${v.id}" ${sel}${dis}${title}>${escapeHtml(v.name)}</option>`;
+            const fitTitle = fit ? fit.detail : "";
+            const titleAttr =
+              teenTitle || fitTitle
+                ? ` title="${escapeHtml([teenTitle, fitTitle].filter(Boolean).join(" · "))}"`
+                : "";
+            const mark = fit ? " ⚠" : "";
+            return `<option value="${v.id}" ${sel}${dis}${titleAttr}>${escapeHtml(v.name)}${mark}</option>`;
           })
           .join("");
+      const fitAlert =
+        cell.volunteer_id && attendanceFitnessById[cell.volunteer_id]
+          ? `<span class="att-fitness-cell-badge" title="${escapeHtml(
+              attendanceFitnessById[cell.volunteer_id].detail
+            )}">sem cultuar</span>`
+          : "";
       const teenExc =
         adminMode &&
         cell.volunteer_id &&
@@ -1065,7 +1081,7 @@ function renderManualEditor() {
         adminMode && (ov.teen_sunday || ov.multi_area)
           ? `<span class="admin-override-badge">exceção ativa</span>`
           : "";
-      h += `<div class="manual-area-cell"><label class="${lblCls.trim()}" ${tip ? `title="${tip}"` : ""}><span>${escapeHtml(a)} ${ovBadge}</span><select data-d="${escapeHtml(ev.date)}" data-a="${escapeHtml(a)}">${opts}</select></label>${excHtml}</div>`;
+      h += `<div class="manual-area-cell"><label class="${lblCls.trim()}" ${tip ? `title="${tip}"` : ""}><span>${escapeHtml(a)} ${ovBadge}${fitAlert}</span><select data-d="${escapeHtml(ev.date)}" data-a="${escapeHtml(a)}">${opts}</select></label>${excHtml}</div>`;
     }
     h += "</div></div>";
   }
@@ -1270,6 +1286,296 @@ async function notifyBirthdaysDiscord(force) {
   }
 }
 
+const ATT_STATUS_OPTS = [
+  { id: "", label: "— não marcado —" },
+  { id: "cultou", label: "Cultou" },
+  { id: "servindo", label: "Servindo" },
+  { id: "ausencia_justificada", label: "Ausência justificada" },
+  { id: "ausente", label: "Ausente" },
+];
+
+let attendanceStatuses = ATT_STATUS_OPTS;
+let attendanceEntriesCache = [];
+/** Map volunteer_id -> fitness alert (para edição da escala). */
+let attendanceFitnessById = {};
+
+function todayIsoLocal() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
+    d.getDate()
+  ).padStart(2, "0")}`;
+}
+
+function initAttendanceAdminName() {
+  const inp = $("#att-admin-name");
+  if (!inp) return;
+  try {
+    const saved = localStorage.getItem("attAdminName") || "";
+    if (saved) inp.value = saved;
+  } catch {
+    /* ignore */
+  }
+  inp.addEventListener("change", () => {
+    try {
+      localStorage.setItem("attAdminName", inp.value.trim());
+    } catch {
+      /* ignore */
+    }
+  });
+}
+
+function populateAttHistVolunteer() {
+  const sel = $("#att-hist-volunteer");
+  if (!sel) return;
+  const cur = sel.value;
+  sel.innerHTML =
+    '<option value="">— selecione —</option>' +
+    volunteers
+      .map((v) => `<option value="${v.id}">${escapeHtml(v.name)}</option>`)
+      .join("");
+  if (cur) sel.value = cur;
+}
+
+function attSummaryHtml(summary, labels) {
+  if (!summary) return "";
+  const order = ["cultou", "servindo", "ausente", "ausencia_justificada"];
+  const chips = order
+    .map((k) => {
+      const n = summary[k] || 0;
+      const lab = (labels && labels[k]) || k;
+      return `<div class="att-summary-chip att-st-${k}"><span class="att-summary-label">${escapeHtml(
+        lab
+      )}</span><span class="att-summary-n">${n}</span></div>`;
+    })
+    .join("");
+  return `<div class="att-summary-grid">${chips}</div>`;
+}
+
+function renderAttendanceList(data) {
+  const host = $("#att-list");
+  const sumEl = $("#att-summary");
+  if (!host) return;
+  attendanceEntriesCache = data.entries || [];
+  if (sumEl) {
+    sumEl.classList.remove("hidden");
+    sumEl.innerHTML =
+      `<p class="att-summary-head"><strong>Resumo do culto</strong> — ${
+        data.recorded_count || 0
+      } de ${data.total_volunteers || 0} registrado(s)</p>` +
+      attSummaryHtml(data.summary, data.summary_labels);
+  }
+  if (!attendanceEntriesCache.length) {
+    host.innerHTML =
+      '<p class="muted">Nenhum voluntário cadastrado. Cadastre o time na aba Voluntários.</p>';
+    return;
+  }
+  host.innerHTML = attendanceEntriesCache
+    .map((e) => {
+      const opts = ATT_STATUS_OPTS.map(
+        (o) =>
+          `<option value="${o.id}" ${
+            (e.status || "") === o.id ? "selected" : ""
+          }>${escapeHtml(o.label)}</option>`
+      ).join("");
+      const meta = e.recorded_by
+        ? `<span class="att-meta muted">por ${escapeHtml(e.recorded_by)}${
+            e.updated_by
+              ? ` · editado por ${escapeHtml(e.updated_by)}`
+              : ""
+          }</span>`
+        : "";
+      return `<div class="att-row" data-vid="${e.volunteer_id}">
+        <div class="att-row-name">
+          <strong>${escapeHtml(e.name || "")}</strong>
+          ${meta}
+        </div>
+        <label class="att-row-status">
+          <span class="sr-only">Status</span>
+          <select data-att-status="${e.volunteer_id}">${opts}</select>
+        </label>
+        <label class="att-row-note">
+          <span class="sr-only">Observação</span>
+          <input type="text" data-att-note="${e.volunteer_id}" placeholder="Obs. (opcional)" value="${escapeHtml(
+            e.note || ""
+          )}" />
+        </label>
+      </div>`;
+    })
+    .join("");
+}
+
+async function loadAttendanceForDate() {
+  const dateEl = $("#att-date");
+  const msg = $("#att-msg");
+  const dateIso = dateEl?.value;
+  if (!dateIso) {
+    showMsg(msg, "Selecione a data do culto.", false);
+    return;
+  }
+  try {
+    const data = await api(`/api/attendance/${dateIso}`);
+    renderAttendanceList(data);
+    if (msg) msg.classList.add("hidden");
+  } catch (e) {
+    showMsg(msg, e.message, false);
+  }
+}
+
+async function saveAttendanceForDate() {
+  const dateEl = $("#att-date");
+  const adminEl = $("#att-admin-name");
+  const msg = $("#att-msg");
+  const dateIso = dateEl?.value;
+  const recorded_by = (adminEl?.value || "").trim();
+  if (!dateIso) {
+    showMsg(msg, "Selecione a data do culto.", false);
+    return;
+  }
+  if (!recorded_by) {
+    showMsg(msg, "Informe o nome do administrador que está registrando.", false);
+    return;
+  }
+  try {
+    localStorage.setItem("attAdminName", recorded_by);
+  } catch {
+    /* ignore */
+  }
+  const entries = [];
+  $$("#att-list .att-row").forEach((row) => {
+    const vid = +row.dataset.vid;
+    const st = row.querySelector(`[data-att-status="${vid}"]`)?.value || "";
+    const note = row.querySelector(`[data-att-note="${vid}"]`)?.value || "";
+    entries.push({
+      volunteer_id: vid,
+      status: st || null,
+      note: note.trim() || null,
+    });
+  });
+  try {
+    const out = await api(`/api/attendance/${dateIso}`, {
+      method: "PUT",
+      body: JSON.stringify({ recorded_by, entries }),
+    });
+    showMsg(
+      msg,
+      `Salvo: ${out.saved} registro(s)${
+        out.cleared ? `, ${out.cleared} removido(s)` : ""
+      }.`,
+      true
+    );
+    await loadAttendanceForDate();
+    await loadAttendanceFitness();
+  } catch (e) {
+    showMsg(msg, e.message, false);
+  }
+}
+
+async function loadVolunteerAttendanceHistory() {
+  const sel = $("#att-hist-volunteer");
+  const body = $("#att-hist-body");
+  const sumEl = $("#att-hist-summary");
+  const vid = sel?.value ? +sel.value : 0;
+  if (!vid) {
+    if (body) body.innerHTML = '<p class="muted">Selecione um voluntário.</p>';
+    if (sumEl) sumEl.classList.add("hidden");
+    return;
+  }
+  try {
+    const data = await api(`/api/attendance/volunteer/${vid}`);
+    if (sumEl) {
+      sumEl.classList.remove("hidden");
+      sumEl.innerHTML =
+        `<p class="att-summary-head"><strong>${escapeHtml(
+          data.name
+        )}</strong> — totais no histórico</p>` +
+        attSummaryHtml(data.summary, data.summary_labels);
+    }
+    const entries = data.entries || [];
+    if (!entries.length) {
+      if (body)
+        body.innerHTML =
+          '<p class="muted">Ainda não há registros de acompanhamento para esta pessoa.</p>';
+      return;
+    }
+    body.innerHTML = `<table class="att-hist-table"><thead><tr>
+      <th>Data</th><th>Status</th><th>Obs.</th><th>Registrado por</th><th>Editado por</th>
+    </tr></thead><tbody>${entries
+      .map(
+        (e) => `<tr>
+      <td>${escapeHtml(fmtBR(e.event_date))}</td>
+      <td><span class="att-st-badge att-st-${escapeHtml(e.status || "")}">${escapeHtml(
+          e.status_label || e.status || ""
+        )}</span></td>
+      <td>${escapeHtml(e.note || "—")}</td>
+      <td>${escapeHtml(e.recorded_by || "—")}<br><span class="muted" style="font-size:0.75rem">${escapeHtml(
+          e.recorded_at || ""
+        )}</span></td>
+      <td>${
+        e.updated_by
+          ? `${escapeHtml(e.updated_by)}<br><span class="muted" style="font-size:0.75rem">${escapeHtml(
+              e.updated_at || ""
+            )}</span>`
+          : "—"
+      }</td>
+    </tr>`
+      )
+      .join("")}</tbody></table>`;
+  } catch (e) {
+    if (body) body.innerHTML = `<p class="message err">${escapeHtml(e.message)}</p>`;
+  }
+}
+
+async function loadAttendanceTab() {
+  const dateEl = $("#att-date");
+  if (dateEl && !dateEl.value) dateEl.value = todayIsoLocal();
+  initAttendanceAdminName();
+  populateAttHistVolunteer();
+  await loadAttendanceForDate();
+}
+
+async function loadAttendanceFitness() {
+  const wrap = $("#attendance-fitness-wrap");
+  const list = $("#attendance-fitness-list");
+  if (!wrap || !list) return;
+  try {
+    const data = await api("/api/attendance/fitness");
+    const alerts = data.alerts || [];
+    attendanceFitnessById = {};
+    for (const a of alerts) {
+      attendanceFitnessById[a.volunteer_id] = a;
+    }
+    if (!alerts.length) {
+      wrap.classList.add("hidden");
+      list.innerHTML = "";
+      return;
+    }
+    wrap.classList.remove("hidden");
+    list.innerHTML = alerts
+      .map((a) => {
+        const kindLab =
+          a.kind === "no_worship_2m"
+            ? "2 meses sem cultuar"
+            : a.kind === "no_worship_1m"
+              ? "1 mês sem cultuar"
+              : "sem registro";
+        return `<li><strong>${escapeHtml(a.name)}</strong>
+          <span class="att-fitness-kind">${escapeHtml(kindLab)}</span>
+          — ${escapeHtml(a.detail)}
+          ${
+            adminMode
+              ? '<em class="att-fitness-exc"> (modo admin: pode escalar mesmo assim)</em>'
+              : ""
+          }</li>`;
+      })
+      .join("");
+    if (typeof renderManualEditor === "function") renderManualEditor();
+  } catch {
+    attendanceFitnessById = {};
+    wrap.classList.add("hidden");
+    list.innerHTML = "";
+  }
+}
+
 function initThemeToggle() {
   const btn = document.getElementById("theme-toggle");
   if (!btn) return;
@@ -1340,8 +1646,15 @@ document.addEventListener("DOMContentLoaded", async () => {
     b.addEventListener("click", () => {
       tab(b.dataset.tab);
       if (b.dataset.tab === "birthdays") loadBirthdaysTab();
+      if (b.dataset.tab === "attendance") loadAttendanceTab();
     })
   );
+
+  $("#btn-att-load")?.addEventListener("click", loadAttendanceForDate);
+  $("#btn-att-save")?.addEventListener("click", saveAttendanceForDate);
+  $("#att-date")?.addEventListener("change", loadAttendanceForDate);
+  $("#btn-att-hist")?.addEventListener("click", loadVolunteerAttendanceHistory);
+  $("#att-hist-volunteer")?.addEventListener("change", loadVolunteerAttendanceHistory);
 
   $("#btn-save-webhook")?.addEventListener("click", saveDiscordWebhook);
   $("#btn-birthdays-refresh")?.addEventListener("click", refreshBirthdaysTable);

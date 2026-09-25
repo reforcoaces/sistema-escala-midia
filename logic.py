@@ -344,3 +344,122 @@ def detect_no_worship_day_alerts(
 
     alerts.sort(key=lambda x: (x["name"] or "").lower())
     return alerts
+
+
+# Status de presença no culto (acompanhamento — separado da escala).
+ATTENDANCE_STATUSES = (
+    "cultou",
+    "servindo",
+    "ausencia_justificada",
+    "ausente",
+)
+
+ATTENDANCE_STATUS_LABELS = {
+    "cultou": "Cultou",
+    "servindo": "Servindo",
+    "ausencia_justificada": "Ausência justificada",
+    "ausente": "Ausente",
+}
+
+
+def summarize_attendance_statuses(statuses: Iterable[str]) -> dict[str, int]:
+    """Contagens por status; chaves alinhadas a ATTENDANCE_STATUSES."""
+    out = {s: 0 for s in ATTENDANCE_STATUSES}
+    for st in statuses:
+        if st in out:
+            out[st] += 1
+    return out
+
+
+def detect_attendance_fitness_alerts(
+    volunteers: list[dict[str, Any]],
+    attendance_rows: list[dict[str, Any]],
+    *,
+    as_of: dt.date | None = None,
+) -> list[dict[str, Any]]:
+    """
+    Avalia se cada voluntário tem histórico de cultuar (status ``cultou``).
+
+    Registros em ``attendance_rows``: volunteer_id, event_date (ISO), status.
+
+    Retorna alertas informativos (não bloqueiam):
+    - ``no_worship_2m``: nos últimos ~60 dias não cultuou nenhum dia (mas há registros).
+    - ``no_worship_1m``: nos últimos ~30 dias não cultuou.
+    - ``no_records``: sem nenhum registro de acompanhamento no período de 60 dias
+      (só se o acompanhamento já estiver em uso).
+    """
+    today = as_of or dt.date.today()
+    d30 = (today - dt.timedelta(days=30)).isoformat()
+    d60 = (today - dt.timedelta(days=60)).isoformat()
+    today_iso = today.isoformat()
+
+    by_vol: dict[int, list[dict[str, Any]]] = defaultdict(list)
+    any_in_window = False
+    for r in attendance_rows:
+        ed = r.get("event_date") or ""
+        if d60 <= ed <= today_iso:
+            any_in_window = True
+            by_vol[int(r["volunteer_id"])].append(r)
+
+    alerts: list[dict[str, Any]] = []
+    for v in volunteers:
+        vid = int(v["id"])
+        name = v.get("name") or f"#{vid}"
+        rows = by_vol.get(vid, [])
+        if not rows:
+            if any_in_window:
+                alerts.append(
+                    {
+                        "volunteer_id": vid,
+                        "name": name,
+                        "kind": "no_records",
+                        "window_days": 60,
+                        "cultou_count": 0,
+                        "detail": (
+                            "Sem registro de acompanhamento nos últimos 2 meses — "
+                            "confirma se a pessoa está cultuando antes de escalar."
+                        ),
+                    }
+                )
+            continue
+
+        cultou_60 = sum(1 for r in rows if r.get("status") == "cultou")
+        rows_30 = [r for r in rows if (r.get("event_date") or "") >= d30]
+        cultou_30 = sum(1 for r in rows_30 if r.get("status") == "cultou")
+
+        if cultou_60 == 0:
+            alerts.append(
+                {
+                    "volunteer_id": vid,
+                    "name": name,
+                    "kind": "no_worship_2m",
+                    "window_days": 60,
+                    "cultou_count": 0,
+                    "detail": (
+                        "Nos últimos 2 meses não cultuou nenhum dia "
+                        "(só servindo e/ou ausências) — revise antes de escalar."
+                    ),
+                }
+            )
+        elif cultou_30 == 0 and rows_30:
+            alerts.append(
+                {
+                    "volunteer_id": vid,
+                    "name": name,
+                    "kind": "no_worship_1m",
+                    "window_days": 30,
+                    "cultou_count": 0,
+                    "detail": (
+                        "No último mês não cultuou nenhum dia — "
+                        "vale priorizar quem está cultuando."
+                    ),
+                }
+            )
+
+    alerts.sort(
+        key=lambda x: (
+            {"no_worship_2m": 0, "no_worship_1m": 1, "no_records": 2}.get(x["kind"], 9),
+            (x["name"] or "").lower(),
+        )
+    )
+    return alerts

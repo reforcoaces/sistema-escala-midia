@@ -17,10 +17,14 @@ from db import connection
 from full_backup import build_full_backup_payload, restore_full_backup
 from logic import (
     AREAS,
+    ATTENDANCE_STATUS_LABELS,
+    ATTENDANCE_STATUSES,
     assign_greedy_fair,
     build_month_events,
     dates_in_month_with_weekdays,
+    detect_attendance_fitness_alerts,
     detect_no_worship_day_alerts,
+    summarize_attendance_statuses,
     teen_sunday_escala_forbidden,
     thursday_sunday_dates,
 )
@@ -1208,6 +1212,259 @@ def stats(year: int, month: int):
             "worship_alerts": worship_alerts,
         }
     )
+
+
+def _now_iso() -> str:
+    return dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat()
+
+
+def _attendance_row_dict(r: sqlite3.Row) -> dict[str, Any]:
+    return {
+        "id": r["id"],
+        "event_date": r["event_date"],
+        "volunteer_id": r["volunteer_id"],
+        "name": r["name"] if "name" in r.keys() else None,
+        "status": r["status"],
+        "status_label": ATTENDANCE_STATUS_LABELS.get(r["status"], r["status"]),
+        "note": r["note"],
+        "recorded_by": r["recorded_by"],
+        "recorded_at": r["recorded_at"],
+        "updated_by": r["updated_by"],
+        "updated_at": r["updated_at"],
+    }
+
+
+@app.route("/api/attendance/statuses", methods=["GET"])
+def attendance_statuses():
+    return jsonify(
+        [
+            {"id": s, "label": ATTENDANCE_STATUS_LABELS[s]}
+            for s in ATTENDANCE_STATUSES
+        ]
+    )
+
+
+@app.route("/api/attendance/fitness", methods=["GET"])
+def attendance_fitness():
+    """Alertas para montagem da escala: quem não tem estado cultuando."""
+    with connection() as conn:
+        vols = [
+            {"id": int(r["id"]), "name": r["name"]}
+            for r in conn.execute(
+                "SELECT id, name FROM volunteer ORDER BY name COLLATE NOCASE"
+            ).fetchall()
+        ]
+        since = (dt.date.today() - dt.timedelta(days=60)).isoformat()
+        rows = conn.execute(
+            """
+            SELECT volunteer_id, event_date, status
+            FROM culto_attendance
+            WHERE event_date >= ?
+            """,
+            (since,),
+        ).fetchall()
+    att = [
+        {
+            "volunteer_id": int(r["volunteer_id"]),
+            "event_date": r["event_date"],
+            "status": r["status"],
+        }
+        for r in rows
+    ]
+    alerts = detect_attendance_fitness_alerts(vols, att)
+    return jsonify({"alerts": alerts, "as_of": dt.date.today().isoformat()})
+
+@app.route("/api/attendance/volunteer/<int:vid>", methods=["GET"])
+def get_volunteer_attendance_history(vid: int):
+    limit = request.args.get("limit", 50, type=int)
+    limit = max(1, min(limit or 50, 200))
+    with connection() as conn:
+        vol = conn.execute(
+            "SELECT id, name FROM volunteer WHERE id = ?", (vid,)
+        ).fetchone()
+        if not vol:
+            return jsonify({"error": "Voluntário não encontrado."}), 404
+        rows = conn.execute(
+            """
+            SELECT a.id, a.event_date, a.volunteer_id, a.status, a.note,
+                   a.recorded_by, a.recorded_at, a.updated_by, a.updated_at,
+                   v.name
+            FROM culto_attendance a
+            JOIN volunteer v ON v.id = a.volunteer_id
+            WHERE a.volunteer_id = ?
+            ORDER BY a.event_date DESC
+            LIMIT ?
+            """,
+            (vid, limit),
+        ).fetchall()
+        all_statuses = conn.execute(
+            """
+            SELECT status FROM culto_attendance WHERE volunteer_id = ?
+            """,
+            (vid,),
+        ).fetchall()
+    entries = [_attendance_row_dict(r) for r in rows]
+    summary = summarize_attendance_statuses(r["status"] for r in all_statuses)
+    return jsonify(
+        {
+            "volunteer_id": vid,
+            "name": vol["name"],
+            "entries": entries,
+            "summary": summary,
+            "summary_labels": {
+                s: ATTENDANCE_STATUS_LABELS[s] for s in ATTENDANCE_STATUSES
+            },
+        }
+    )
+
+
+@app.route("/api/attendance/<date_iso>", methods=["GET"])
+def get_attendance_for_date(date_iso: str):
+    try:
+        dt.date.fromisoformat(date_iso)
+    except ValueError:
+        return jsonify({"error": "Data inválida (use AAAA-MM-DD)."}), 400
+    with connection() as conn:
+        vols = conn.execute(
+            "SELECT id, name FROM volunteer ORDER BY name COLLATE NOCASE"
+        ).fetchall()
+        rows = conn.execute(
+            """
+            SELECT a.id, a.event_date, a.volunteer_id, a.status, a.note,
+                   a.recorded_by, a.recorded_at, a.updated_by, a.updated_at,
+                   v.name
+            FROM culto_attendance a
+            JOIN volunteer v ON v.id = a.volunteer_id
+            WHERE a.event_date = ?
+            """,
+            (date_iso,),
+        ).fetchall()
+    by_vid = {int(r["volunteer_id"]): _attendance_row_dict(r) for r in rows}
+    entries = []
+    for v in vols:
+        vid = int(v["id"])
+        existing = by_vid.get(vid)
+        if existing:
+            entries.append(existing)
+        else:
+            entries.append(
+                {
+                    "id": None,
+                    "event_date": date_iso,
+                    "volunteer_id": vid,
+                    "name": v["name"],
+                    "status": None,
+                    "status_label": None,
+                    "note": None,
+                    "recorded_by": None,
+                    "recorded_at": None,
+                    "updated_by": None,
+                    "updated_at": None,
+                }
+            )
+    summary = summarize_attendance_statuses(
+        e["status"] for e in entries if e.get("status")
+    )
+    return jsonify(
+        {
+            "event_date": date_iso,
+            "entries": entries,
+            "summary": summary,
+            "summary_labels": {
+                s: ATTENDANCE_STATUS_LABELS[s] for s in ATTENDANCE_STATUSES
+            },
+            "recorded_count": sum(1 for e in entries if e.get("status")),
+            "total_volunteers": len(entries),
+        }
+    )
+
+
+@app.route("/api/attendance/<date_iso>", methods=["PUT"])
+def put_attendance_for_date(date_iso: str):
+    try:
+        dt.date.fromisoformat(date_iso)
+    except ValueError:
+        return jsonify({"error": "Data inválida (use AAAA-MM-DD)."}), 400
+    data = request.get_json(force=True, silent=True) or {}
+    recorded_by = (data.get("recorded_by") or "").strip()
+    if not recorded_by:
+        return jsonify({"error": "Informe o nome do administrador (recorded_by)."}), 400
+    items = data.get("entries") or data.get("items") or []
+    if not isinstance(items, list):
+        return jsonify({"error": "entries deve ser uma lista."}), 400
+
+    now = _now_iso()
+    saved = 0
+    cleared = 0
+    with connection() as conn:
+        vol_ids = {
+            int(r["id"])
+            for r in conn.execute("SELECT id FROM volunteer").fetchall()
+        }
+        for i, raw in enumerate(items):
+            if not isinstance(raw, dict):
+                return jsonify({"error": f"entries[{i}]: objeto inválido."}), 400
+            try:
+                vid = int(raw.get("volunteer_id"))
+            except (TypeError, ValueError):
+                return jsonify({"error": f"entries[{i}]: volunteer_id inválido."}), 400
+            if vid not in vol_ids:
+                return jsonify({"error": f"Voluntário id {vid} não existe."}), 400
+            status = (raw.get("status") or "").strip() or None
+            note = (raw.get("note") or "").strip() or None
+            if status is None:
+                cur = conn.execute(
+                    """
+                    DELETE FROM culto_attendance
+                    WHERE event_date = ? AND volunteer_id = ?
+                    """,
+                    (date_iso, vid),
+                )
+                cleared += cur.rowcount
+                continue
+            if status not in ATTENDANCE_STATUSES:
+                return (
+                    jsonify(
+                        {
+                            "error": (
+                                f"Status inválido «{status}». "
+                                f"Use: {', '.join(ATTENDANCE_STATUSES)}."
+                            )
+                        }
+                    ),
+                    400,
+                )
+            existing = conn.execute(
+                """
+                SELECT id, recorded_by, recorded_at
+                FROM culto_attendance
+                WHERE event_date = ? AND volunteer_id = ?
+                """,
+                (date_iso, vid),
+            ).fetchone()
+            if existing:
+                conn.execute(
+                    """
+                    UPDATE culto_attendance
+                    SET status = ?, note = ?, updated_by = ?, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (status, note, recorded_by, now, existing["id"]),
+                )
+            else:
+                conn.execute(
+                    """
+                    INSERT INTO culto_attendance
+                        (event_date, volunteer_id, status, note,
+                         recorded_by, recorded_at, updated_by, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, NULL, NULL)
+                    """,
+                    (date_iso, vid, status, note, recorded_by, now),
+                )
+            saved += 1
+
+    return jsonify({"ok": True, "saved": saved, "cleared": cleared})
+
 
 
 def main():

@@ -963,3 +963,200 @@ tr.birthday-today-row td {
   margin: 0 0 0.75rem;
   line-height: 1.4;
 }
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.att-summary {
+  margin-top: 0.85rem;
+  padding: 0.65rem 0.75rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.att-summary-head {
+  margin: 0 0 0.5rem;
+  font-size: 0.88rem;
+}
+
+.att-summary-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.att-summary-chip {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.35rem 0.65rem;
+  border-radius: 6px;
+  font-size: 0.82rem;
+  border: 1px solid var(--border);
+}
+
+.att-summary-n {
+  font-weight: 700;
+  font-size: 1rem;
+}
+
+.att-st-cultou {
+  background: rgba(46, 160, 100, 0.18);
+  border-color: rgba(46, 160, 100, 0.45);
+}
+
+.att-st-servindo {
+  background: rgba(80, 140, 220, 0.18);
+  border-color: rgba(80, 140, 220, 0.45);
+}
+
+.att-st-ausente {
+  background: rgba(200, 70, 70, 0.15);
+  border-color: rgba(200, 70, 70, 0.4);
+}
+
+.att-st-ausencia_justificada {
+  background: rgba(200, 160, 40, 0.15);
+  border-color: rgba(200, 160, 40, 0.4);
+}
+
+.att-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.att-row {
+  display: grid;
+  grid-template-columns: minmax(140px, 1.2fr) minmax(160px, 0.9fr) minmax(140px, 1fr);
+  gap: 0.5rem 0.75rem;
+  align-items: center;
+  padding: 0.5rem 0.6rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--panel, var(--bg));
+}
+
+@media (max-width: 720px) {
+  .att-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+.att-row-name {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.att-meta {
+  font-size: 0.72rem;
+}
+
+.att-row-status select,
+.att-row-note input {
+  width: 100%;
+}
+
+.att-hist-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+.att-hist-table th,
+.att-hist-table td {
+  border-bottom: 1px solid var(--border);
+  padding: 0.45rem 0.5rem;
+  text-align: left;
+  vertical-align: top;
+}
+
+.att-hist-table th {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--muted);
+}
+
+.att-st-badge {
+  display: inline-block;
+  padding: 0.12rem 0.45rem;
+  border-radius: 4px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  border: 1px solid transparent;
+}
+
+.attendance-fitness-wrap {
+  margin-top: 1rem;
+  padding: 0.75rem 0.85rem;
+  border-radius: 8px;
+  background: #fff8e1;
+  border: 1px solid #ffcc80;
+  color: #6d4c00;
+}
+
+html[data-theme="dark"] .attendance-fitness-wrap {
+  background: #3d3218;
+  border-color: #8a6d2a;
+  color: #f5e6b8;
+}
+
+.attendance-fitness-intro {
+  font-size: 0.82rem;
+  margin: 0 0 0.5rem;
+  line-height: 1.4;
+}
+
+.attendance-fitness-list {
+  margin: 0;
+  padding-left: 1.2rem;
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+
+.attendance-fitness-list li {
+  margin: 0.3rem 0;
+}
+
+.att-fitness-kind {
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  opacity: 0.85;
+}
+
+.att-fitness-exc {
+  font-style: italic;
+  opacity: 0.9;
+}
+
+.att-fitness-cell-badge {
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: #856404;
+  background: #fff3cd;
+  border: 1px solid #ffeeba;
+  border-radius: 4px;
+  padding: 0.05rem 0.35rem;
+}
+
+html[data-theme="dark"] .att-fitness-cell-badge {
+  color: #f5e6b8;
+  background: #4a3a12;
+  border-color: #8a6d2a;
+}
